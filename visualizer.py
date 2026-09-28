@@ -1069,19 +1069,17 @@ def play_mode(cages, solution):
                         screen.blit(ptxt, (cx - ptxt.get_width() / 2, cy - ptxt.get_height() / 2))
 
         # The player's marks on top of the digits, like the app: a dashed box in
-        # each marked cell, and the sum on a patch of the cell's colour. A mark
-        # only shows while you look at it: a selected cell is in it, or the
-        # marks list is open (just the hovered row's mark when hovering one)
+        # each marked cell, and the sum on a patch of the cell's colour. Only
+        # the marks passing through the selection show (and are listed under the
+        # chevron); hovering a row of that list shows just its mark
+        visible_marks = [mi for mi, uc in enumerate(user_cages)
+                         if mi == selected_mark or not selected.isdisjoint(uc["cells"])]
         hovered_mark = None
         if marks_open and marks_panel_rect is not None and marks_panel_rect.collidepoint(mouse):
             row = (mouse[1] - marks_panel_rect.y - 6) // 40
-            hovered_mark = row if 0 <= row < len(user_cages) else None
+            hovered_mark = visible_marks[row] if 0 <= row < len(visible_marks) else None
         for mi, uc in enumerate(user_cages):
-            if hovered_mark is not None:
-                shown = mi == hovered_mark
-            else:
-                shown = marks_open or mi == selected_mark or not selected.isdisjoint(uc["cells"])
-            if not shown:
+            if mi not in visible_marks or hovered_mark not in (None, mi):
                 continue
             for r, c in uc["cells"]:
                 x, y = cell_xy(r, c)
@@ -1118,7 +1116,7 @@ def play_mode(cages, solution):
         bar_x, bar_y = GRID_OFFSET_X, COMBO_Y
         # The marks list opens from a chevron at the start of the bar, like the app
         marks_toggle_rect = None
-        if user_cages:
+        if visible_marks:
             marks_toggle_rect = pygame.Rect(bar_x, bar_y, 34, 30)
             hover = marks_toggle_rect.collidepoint(mouse)
             pygame.draw.rect(screen, T["key_hover"] if hover or marks_open else T["key"], marks_toggle_rect,
@@ -1162,13 +1160,14 @@ def play_mode(cages, solution):
         # --- The player's marks, one row each: "sum = [chips]" and a bin to delete ---
         marks_panel_rect = None
         mark_trash_rects = []
-        if marks_open and user_cages:
+        if marks_open and visible_marks:
             row_h = 40
-            marks_panel_rect = pygame.Rect(GRID_OFFSET_X - 4, COMBO_Y + 36, GRID_SIZE + 8, 12 + row_h * len(user_cages))
+            marks_panel_rect = pygame.Rect(GRID_OFFSET_X - 4, COMBO_Y + 36, GRID_SIZE + 8, 12 + row_h * len(visible_marks))
             pygame.draw.rect(screen, T["panel"], marks_panel_rect, border_radius=12)
             pygame.draw.rect(screen, T["key_edge"], marks_panel_rect, 1, border_radius=12)
-            for mi, uc in enumerate(user_cages):
-                ry = marks_panel_rect.y + 6 + mi * row_h
+            for row, mi in enumerate(visible_marks):
+                uc = user_cages[mi]
+                ry = marks_panel_rect.y + 6 + row * row_h
                 x0 = marks_panel_rect.x + 12
                 trash = pygame.Rect(marks_panel_rect.right - 42, ry + 4, 30, 30)
                 mark_trash_rects.append((trash, mi))

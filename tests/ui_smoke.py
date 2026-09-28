@@ -115,12 +115,12 @@ def main():
          20: ["shot:play_mark_combo_excluded"]},
         lambda: visualizer.play_mode(cages, sol))
 
-    # The marks list: open it from the chevron, rule out a combo there, then delete the mark
+    # The marks list: select a marked cell, open the list from the chevron, rule out a combo, delete the mark
     toggle = (GX + 17, 48 + 15)
     panel_row = 48 + 36 + 6
     run({3: click(cell_pt(3, 3)), 5: click(cell_pt(3, 4), shift=True), 7: click(cell_pt(4, 4), shift=True),
          9: click(btn_pt("Mark")), 11: key(pygame.K_1, "1"), 12: key(pygame.K_5, "5"), 13: key(pygame.K_RETURN),
-         15: key(pygame.K_ESCAPE), 17: click(toggle),
+         15: click(cell_pt(3, 3)), 17: click(toggle),
          19: click((GX + 12 + 60, panel_row + 18)),
          22: ["shot:play_marks_panel"],
          24: click((GX + 540 - 22, panel_row + 19)),

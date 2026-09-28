@@ -87,7 +87,7 @@ def load_and_solve(filename):
 THEME = {
     "bg": (38, 40, 46), "cell": (47, 49, 55), "uncaged": (40, 42, 48),
     "house": (44, 62, 88), "selected": (62, 92, 140), "selected_edge": (120, 160, 225),
-    "multi": (56, 82, 124), "error_bg": (110, 45, 50), "blocked": (60, 64, 76), "hl": (240, 168, 60),
+    "multi": (56, 82, 124), "error_bg": (110, 45, 50), "hl_cell": (62, 74, 94), "hl": (240, 168, 60),
     "grid": (62, 66, 76), "box": (96, 142, 222), "cage": (206, 208, 214),
     "label": (236, 238, 242), "digit": (226, 232, 246), "digit_bad": (245, 105, 105),
     "pencil": (158, 164, 182), "pencil_bad": (235, 90, 90), "pencil_must": (110, 215, 140),
@@ -944,15 +944,13 @@ def play_mode(cages, solution):
                               | {(sr // 3 * 3 + i, sc // 3 * 3 + j) for i in range(3) for j in range(3)})
 
         # Digit highlight, like the app: placed copies and pencil copies get
-        # orange boxes, and the houses already holding the digit are shaded
+        # orange boxes, and every cell the digit is in or can still go (placed
+        # or pencilled) is tinted, so the rest of the grid stays dark
         hl = highlight_digit if len(selected) <= 1 else None
-        blocked = set()
+        hl_cells = set()
         if hl:
-            for r in range(9):
-                for c in range(9):
-                    if board[r][c] == hl:
-                        blocked |= ({(r, i) for i in range(9)} | {(i, c) for i in range(9)}
-                                    | {(r // 3 * 3 + i, c // 3 * 3 + j) for i in range(3) for j in range(3)})
+            hl_cells = {(r, c) for r in range(9) for c in range(9)
+                        if board[r][c] == hl or (not board[r][c] and hl in pencil[r][c])}
 
         # Cell backgrounds (kept per cell so sum labels can knock out the dashed line)
         cell_bg = {}
@@ -965,8 +963,8 @@ def play_mode(cages, solution):
                     bg = T["multi"]
                 elif (r, c) in hl_house_cells:
                     bg = T["house"]
-                elif (r, c) in blocked:
-                    bg = T["blocked"]
+                elif (r, c) in hl_cells:
+                    bg = T["hl_cell"]
                 elif (r, c) not in caged_cells:
                     bg = T["uncaged"]
                 else:

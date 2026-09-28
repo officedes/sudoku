@@ -2192,6 +2192,122 @@ def eliminate_als_xz(candidates, board, cages, log=None, single_step=False):
     return changed
 
 
+def _distinct_virtual_cages(candidates, board, cages):
+    """Derived cages whose digits must all differ: groups of 2-4 cells with a
+    proven total (innie groups, naked sets) that all see each other or share
+    a cage, and aren't simply a real cage. (cells, total, why) each."""
+    cage_of = {tuple(x): i for i, (_, cls, _) in enumerate(cages) for x in cls}
+    real = {frozenset(tuple(x) for x in cls) for _, cls, _ in cages}
+    out, found = [], set()
+    for vcells, total, why in _virtual_cages(candidates, board, cages):
+        if not 2 <= len(vcells) <= 4 or vcells in real or vcells in found:
+            continue
+        if all(b in _PEER_SET[a] or cage_of.get(a, a) == cage_of.get(b, b)
+               for a, b in combinations(vcells, 2)):
+            found.add(vcells)
+            out.append((vcells, total, why))
+    return out
+
+
+def eliminate_cage_pairs(candidates, board, cages, log=None, single_step=False):
+    """Combination clashes between two cages, derived cages included.
+
+    Real cages and derived cages (2-4 mutually different cells with a proven
+    total, e.g. two innies of a row) are paired when a cell of one sees all
+    of the other. Combo f of A and combo g of B can't both hold if such a
+    cell could only take digits of f that g also needs (or, when every cell
+    sees every other, if f and g share a digit). Combos with no compatible
+    partner go, and a digit every compatible pair uses must sit in A or B,
+    so a cell seeing all its spots in both loses it. Digits a derived cage
+    always holds first get the common-peer treatment on their own.
+
+    Example (Assassin 44V1.5): the innies of row 9 give A9 + E9 = 6, so
+    {1,5} or {2,4}; the 6-cage in box 8 is {1,5} or {2,4} too, and E9 sees
+    all of it, so the two take different pairs: together they hold exactly
+    {1,2,4,5}, and a cell seeing all four cells loses those digits.
+    """
+    changed = False
+    cage_of = {tuple(x): i for i, (_, cls, _) in enumerate(cages) for x in cls}
+    seen_by = {}
+    for r in range(9):
+        for c in range(9):
+            mates = {tuple(x) for x in cages[cage_of[(r, c)]][1]} if (r, c) in cage_of else set()
+            seen_by[(r, c)] = _PEER_SET[(r, c)] | (mates - {(r, c)})
+    units = [(f"cage sum={s}", (s, [tuple(x) for x in cls], 0)) for s, cls, _ in cages]
+    units += [(f"derived {cells(sorted(vc))} = {total}", (total, sorted(vc), 0))
+              for vc, total, _ in _distinct_virtual_cages(candidates, board, cages)]
+    states = [_cage_state(board, unit, candidates) for _, unit in units]
+    for i in range(len(cages), len(units)):
+        # A derived cage's must-have digits, like a real cage's in common peers
+        if not states[i]:
+            continue
+        must = ALL_DIGITS
+        for f in states[i][1]:
+            must &= f
+        affected = []
+        for d in mask_to_set(must):
+            spots = [x for x in states[i][0] if d in candidates[x[0]][x[1]]]
+            for r, c in seen_by[spots[0]]:
+                if board[r][c] == 0 and d in candidates[r][c] and (r, c) not in spots                         and all(s in seen_by[(r, c)] for s in spots):
+                    candidates[r][c].discard(d)
+                    affected.append((cell(r, c), [d]))
+        if affected:
+            changed = True
+            if log is not None:
+                _log_removals(log, f"Common peers: digits {sorted(mask_to_set(must))} must be in {units[i][0]}", affected)
+                if single_step:
+                    return True
+    states = [_cage_state(board, unit, candidates) for _, unit in units]
+    for i in range(len(units)):
+        for j in range(i + 1, len(units)):
+            a, b = states[i], states[j]
+            if not a or not b or set(a[0]) & set(b[0]):
+                continue
+            a_watch = [x for x in a[0] if all(y in seen_by[x] for y in b[0])]
+            b_watch = [y for y in b[0] if all(x in seen_by[y] for x in a[0])]
+            if not a_watch and not b_watch:
+                continue
+            a_masks = [to_mask(candidates[r][c]) for r, c in a_watch]
+            b_masks = [to_mask(candidates[r][c]) for r, c in b_watch]
+            apart = len(a_watch) == len(a[0])
+
+            def clash(f, g):
+                return (apart and f & g) or any(not m & f & ~g for m in a_masks) \
+                    or any(not m & g & ~f for m in b_masks)
+
+            pairs = [(f, g) for f in a[1] for g in b[1] if not clash(f, g)]
+            if not pairs:
+                continue  # nothing fits: leave it for the contradiction checks
+            keep_a, keep_b = {f for f, _ in pairs}, {g for _, g in pairs}
+            affected = []
+            if len(keep_a) < len(a[1]):
+                affected += _restrict_cage(board, units[i][1], candidates, keep_a)
+            if len(keep_b) < len(b[1]):
+                affected += _restrict_cage(board, units[j][1], candidates, keep_b)
+            must = ALL_DIGITS
+            for f, g in pairs:
+                must &= f | g
+            for d in mask_to_set(must):
+                spots = [x for x in a[0] + b[0] if d in candidates[x[0]][x[1]]]
+                if not spots:
+                    continue
+                for r, c in seen_by[spots[0]]:
+                    if board[r][c] == 0 and d in candidates[r][c] and (r, c) not in spots \
+                            and all(s in seen_by[(r, c)] for s in spots):
+                        candidates[r][c].discard(d)
+                        affected.append((cell(r, c), [d]))
+            if affected:
+                changed = True
+                states[i] = _cage_state(board, units[i][1], candidates)
+                states[j] = _cage_state(board, units[j][1], candidates)
+                if log is not None:
+                    _log_removals(log, f"Cage pair: {units[i][0]} and {units[j][0]} can't take clashing"
+                                       f" combos; together they hold {sorted(mask_to_set(must))}", affected)
+                    if single_step:
+                        return True
+    return changed
+
+
 def filter_cage_combos(candidates, board, cages):
     """Re-filter candidate grid by cage combos.
 
@@ -2256,7 +2372,7 @@ def apply_candidate_elimination(board, cages, innies=True, contradiction=True, s
     simpler strategy can crack, by chaining multiple elimination techniques.
     `innies` switches the advanced killer techniques (rule of 45 over several
     houses, killer subsets, common peers, conflicting combos, leftovers, house
-    combos, killer fish, ALS-XZ) and
+    combos, cage pairs, killer fish, ALS-XZ) and
     `contradiction` the first-order contradiction checks; that is how the
     solver measures which level a puzzle needs. A `stats` dict
     collects "contradictions": how many times everything else was stuck and a
@@ -2309,6 +2425,7 @@ def apply_candidate_elimination(board, cages, innies=True, contradiction=True, s
         # The costly techniques only run once everything cheaper has stalled.
         if innies and not changed and not _find_single(board, candidates):
             changed = (eliminate_large_sums(candidates, board, cages, elim_log)
+                       or eliminate_cage_pairs(candidates, board, cages, elim_log)
                        or eliminate_killer_fish(candidates, board, cages, elim_log)
                        or eliminate_als_xz(candidates, board, cages, elim_log))
         if contradiction and not changed and not _find_single(board, candidates):

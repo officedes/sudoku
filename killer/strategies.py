@@ -18,7 +18,7 @@ from killer.helpers import cell, cells, fmt_combos, house_name, cage_desc, get_h
 from killer.sudoku import (
     get_possible_values, get_cage_candidates, get_possible_combinations,
     digit_combos, can_assign_combo, build_candidates,
-    ALL_DIGITS, to_mask, mask_to_set, cage_support,
+    ALL_DIGITS, MASK_SUM, to_mask, mask_to_set, cage_support,
 )
 
 
@@ -1934,6 +1934,264 @@ def eliminate_leftovers(candidates, board, cages, log=None, single_step=False):
     return changed
 
 
+def _part_options(board, cage, candidates, part):
+    """Digit masks the cells in `part` (some of a cage's empty cells) can hold
+    together in a valid assignment of the whole cage."""
+    cage_sum, cage_cells, _ = cage
+    empty = [(r, c) for r, c in cage_cells if board[r][c] == 0]
+    filled = [board[r][c] for r, c in cage_cells if board[r][c]]
+    fmask = to_mask(filled)
+    remaining = cage_sum - sum(filled)
+    rest = [x for x in empty if x not in part]
+    layers = {0}
+    for r, c in part:
+        cm = to_mask(candidates[r][c]) & ~fmask
+        nxt = set()
+        for used in layers:
+            free = cm & ~used
+            while free:
+                low = free & -free
+                nxt.add(used | low)
+                free ^= low
+        layers = nxt
+    options = set()
+    for m in layers:
+        if not rest:
+            if MASK_SUM[m] == remaining:
+                options.add(m)
+        elif cage_support([to_mask(candidates[r][c]) for r, c in rest], remaining - MASK_SUM[m], fmask | m):
+            options.add(m)
+    return options
+
+
+def eliminate_house_combos(candidates, board, cages, log=None, single_step=False):
+    """Whole-house combination analysis ("combo blocks").
+
+    In a row, column or box, each cage touching it offers the digit sets its
+    cells there could hold (checked against the whole cage), and each uncaged
+    cell offers its candidates. Together they must fill exactly the house's
+    missing digits, with no digit twice. Options that fit no such fill are
+    dropped, and cells lose digits no surviving option gives them.
+
+    Example: box 5 holds cages 10/2 ({1,9} {2,8} {3,7} {4,6}) and 11/2 inside,
+    plus parts of two others; if every fill of the box that uses {4,6} for
+    10/2 leaves 11/2 without a pair, 10/2 can't be {4,6}.
+    """
+    changed = False
+    cage_of = {tuple(x): i for i, (_, cls, _) in enumerate(cages) for x in cls}
+    for hname, hcells in _house_list():
+        placed = to_mask([board[r][c] for r, c in hcells if board[r][c]])
+        target = ALL_DIGITS & ~placed
+        empty = [(r, c) for r, c in hcells if board[r][c] == 0]
+        if not empty:
+            continue
+        parts = {}
+        for x in empty:
+            parts.setdefault(cage_of.get(x, x), []).append(x)
+        segments = []  # (key, cells, options)
+        for key, cells_ in parts.items():
+            if isinstance(key, int):
+                opts = {m for m in _part_options(board, cages[key], candidates, cells_) if not m & ~target}
+            else:
+                opts = {1 << d for d in candidates[key[0]][key[1]] if target >> d & 1}
+            if not opts:
+                break
+            segments.append((key, cells_, opts))
+        else:
+            segments.sort(key=lambda s: len(s[2]))
+            layers = [{0}]
+            for _, _, opts in segments:
+                layers.append({u | m for u in layers[-1] for m in opts if not u & m})
+            if target not in layers[-1]:
+                continue  # no fill at all: leave it for the contradiction checks
+            good = {target}
+            allowed = [set() for _ in segments]
+            for k in range(len(segments) - 1, -1, -1):
+                prev_good = set()
+                for u in layers[k]:
+                    for m in segments[k][2]:
+                        if not u & m and u | m in good:
+                            allowed[k].add(m)
+                            prev_good.add(u)
+                good = prev_good
+            affected = []
+            for (key, cells_, opts), keep in zip(segments, allowed):
+                if keep == opts:
+                    continue
+                union = 0
+                for m in keep:
+                    union |= m
+                digits = mask_to_set(union)
+                for r, c in cells_:
+                    gone = candidates[r][c] - digits
+                    if gone:
+                        candidates[r][c] -= gone
+                        affected.append((cell(r, c), sorted(gone)))
+            if affected:
+                changed = True
+                if log is not None:
+                    _log_removals(log, f"House combos in {hname}: cages and cells must fill its missing digits once each",
+                                  affected)
+                    if single_step:
+                        return True
+    return changed
+
+
+_HOUSE_BITS = [sum(1 << (r * 9 + c) for r, c in get_house_cells(t, i)) for t in ("row", "col", "box") for i in range(9)]
+
+
+def _bits(cells_):
+    return sum(1 << (r * 9 + c) for r, c in cells_)
+
+
+def _cells_of(bits):
+    out = []
+    while bits:
+        low = bits & -bits
+        i = low.bit_length() - 1
+        out.append((i // 9, i % 9))
+        bits ^= low
+    return out
+
+
+def eliminate_killer_fish(candidates, board, cages, log=None, single_step=False):
+    """Fish (X-Wing, Swordfish, Franken) with cages as units.
+
+    For a digit d, a "base" is a unit holding d exactly once: a house, or a
+    cage whose every combo uses d. If N disjoint bases (N = 2 or 3) have all
+    their spots for d inside N covering houses, those N copies of d fill the
+    covers, so no other cell of the covers can be d.
+
+    Example: cage 16/2 = {7,9} spans rows 2-3 of column 1, and 9 in row 7 fits
+    only in columns 1 and 5; the cage and row 7 lie within columns 1 and 5, so
+    no other cell of those columns is 9.
+    """
+    changed = False
+    houses = list(zip(_house_list(), _HOUSE_BITS))
+    states = [_cage_state(board, cage, candidates) for cage in cages]
+    for d in range(1, 10):
+        cand_bits = sum(1 << (r * 9 + c) for r in range(9) for c in range(9)
+                        if board[r][c] == 0 and d in candidates[r][c])
+        units = []
+        for (hname, hcells), hb in houses:
+            if any(board[r][c] == d for r, c in hcells):
+                continue
+            spots = hb & cand_bits
+            if spots.bit_count() >= 2:
+                units.append((hname, spots))
+        for ci, state in enumerate(states):
+            if state and all(f >> d & 1 for f in state[1]):
+                spots = _bits(state[0]) & cand_bits
+                if spots.bit_count() >= 2:
+                    units.append((f"cage sum={cages[ci][0]}", spots))
+        for n in (2, 3):
+            for bases in combinations(units, n):
+                spots = 0
+                ok = True
+                for _, s in bases:
+                    if spots & s:
+                        ok = False
+                        break
+                    spots |= s
+                if not ok:
+                    continue
+                touching = [(hn, hb) for (hn, _), hb in houses if hb & spots]
+                for covers in combinations(touching, n):
+                    cover_bits = 0
+                    for _, hb in covers:
+                        cover_bits |= hb
+                    if spots & ~cover_bits:
+                        continue
+                    targets = cover_bits & cand_bits & ~spots
+                    if not targets:
+                        continue
+                    affected = []
+                    for r, c in _cells_of(targets):
+                        candidates[r][c].discard(d)
+                        affected.append((cell(r, c), [d]))
+                    cand_bits &= ~targets
+                    changed = True
+                    if log is not None:
+                        _log_removals(log, f"Killer fish on {d}: {', '.join(b for b, _ in bases)} lie within"
+                                           f" {', '.join(c for c, _ in covers)}", affected)
+                        if single_step:
+                            return True
+    return changed
+
+
+def eliminate_als_xz(candidates, board, cages, log=None, single_step=False):
+    """ALS-XZ with houses and cages as almost locked sets.
+
+    An almost locked set (ALS) is N cells that must all differ - within a
+    house, or a whole cage - holding N+1 candidates. For two disjoint ALSs A
+    and B sharing a digit X where every X in A sees every X in B, X can sit in
+    at most one of them, so the other is locked; then any other shared digit Z
+    lies in A or B, and a cell seeing every Z in both can't be Z.
+
+    Example: B2 = {4,7} is one cell with two candidates; D2 and E2 hold
+    {4,5,7} between them. Every 4 in either sees the other's 4s (row 2), so
+    one of the two sets is locked, and the 7 is in B2 or in D2/E2: any cell
+    of row 2 outside them loses 7.
+    """
+    changed = False
+    cage_of = {tuple(x): i for i, (_, cls, _) in enumerate(cages) for x in cls}
+    seen = {}
+    for r in range(9):
+        for c in range(9):
+            mates = [tuple(x) for x in cages[cage_of[(r, c)]][1]] if (r, c) in cage_of else []
+            seen[(r, c)] = _bits(_PEER_SET[(r, c)]) | _bits(x for x in mates if x != (r, c))
+    als = {}
+    for _, hcells in _house_list():
+        empty = [(r, c) for r, c in hcells if board[r][c] == 0]
+        for size in (1, 2, 3):
+            for group in combinations(empty, size):
+                m = to_mask(set().union(*(candidates[r][c] for r, c in group)))
+                if m.bit_count() == size + 1:
+                    als[_bits(group)] = m
+    for cage in cages:
+        empty = [tuple(x) for x in cage[1] if board[x[0]][x[1]] == 0]
+        if 2 <= len(empty) <= 5:
+            m = to_mask(set().union(*(candidates[r][c] for r, c in empty)))
+            if m.bit_count() == len(empty) + 1:
+                als[_bits(empty)] = m
+    items = list(als.items())
+
+    def digit_cells(bits, d):
+        return _bits(x for x in _cells_of(bits) if d in candidates[x[0]][x[1]])
+
+    for i, (a_bits, a_mask) in enumerate(items):
+        for b_bits, b_mask in items[i + 1:]:
+            common = a_mask & b_mask
+            if a_bits & b_bits or common.bit_count() < 2:
+                continue
+            for x in mask_to_set(common):
+                xa, xb = digit_cells(a_bits, x), digit_cells(b_bits, x)
+                if not all(seen[p] & xb == xb for p in _cells_of(xa)):
+                    continue
+                for z in mask_to_set(common):
+                    if z == x:
+                        continue
+                    z_cells = _cells_of(digit_cells(a_bits, z) | digit_cells(b_bits, z))
+                    if not z_cells:
+                        continue
+                    watchers = ~(a_bits | b_bits) & ((1 << 81) - 1)
+                    for p in z_cells:
+                        watchers &= seen[p]
+                    affected = []
+                    for r, c in _cells_of(watchers):
+                        if board[r][c] == 0 and z in candidates[r][c]:
+                            candidates[r][c].discard(z)
+                            affected.append((cell(r, c), [z]))
+                    if affected:
+                        changed = True
+                        if log is not None:
+                            _log_removals(log, f"ALS-XZ: [{cells(_cells_of(a_bits))}] and [{cells(_cells_of(b_bits))}]"
+                                               f" linked by {x}, both can hold {z}", affected)
+                            if single_step:
+                                return True
+    return changed
+
+
 def filter_cage_combos(candidates, board, cages):
     """Re-filter candidate grid by cage combos.
 
@@ -1997,7 +2255,8 @@ def apply_candidate_elimination(board, cages, innies=True, contradiction=True, s
     This is the most powerful strategy and can solve positions that no single
     simpler strategy can crack, by chaining multiple elimination techniques.
     `innies` switches the advanced killer techniques (rule of 45 over several
-    houses, killer subsets, common peers, conflicting combos, leftovers) and
+    houses, killer subsets, common peers, conflicting combos, leftovers, house
+    combos, killer fish, ALS-XZ) and
     `contradiction` the first-order contradiction checks; that is how the
     solver measures which level a puzzle needs. A `stats` dict
     collects "contradictions": how many times everything else was stuck and a
@@ -2041,7 +2300,7 @@ def apply_candidate_elimination(board, cages, innies=True, contradiction=True, s
         if innies:
             for technique in (eliminate_innies_outies, eliminate_hidden_killer_subsets,
                               eliminate_naked_killer_subsets, eliminate_common_peers,
-                              eliminate_conflicting_combos, eliminate_leftovers):
+                              eliminate_conflicting_combos, eliminate_leftovers, eliminate_house_combos):
                 if technique(candidates, board, cages, elim_log):
                     changed = True
         if filter_cage_combos(candidates, board, cages):
@@ -2049,7 +2308,9 @@ def apply_candidate_elimination(board, cages, innies=True, contradiction=True, s
             elim_log.append("Cage combo re-filtering")
         # The costly techniques only run once everything cheaper has stalled.
         if innies and not changed and not _find_single(board, candidates):
-            changed = eliminate_large_sums(candidates, board, cages, elim_log)
+            changed = (eliminate_large_sums(candidates, board, cages, elim_log)
+                       or eliminate_killer_fish(candidates, board, cages, elim_log)
+                       or eliminate_als_xz(candidates, board, cages, elim_log))
         if contradiction and not changed and not _find_single(board, candidates):
             changed = eliminate_by_contradiction(candidates, board, cages, elim_log)
             if changed and stats is not None:

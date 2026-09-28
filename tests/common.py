@@ -66,6 +66,27 @@ def parse_grid(text):
     return cages
 
 
+def parse_sumocue(text):
+    """Cages from a SumoCue killer string, '3x3::k:' + 81 numbers.
+
+    Each number is sum * 256 + cage id (the index of the cage's first cell),
+    row by row; the Assassin series is published in this form.
+    """
+    values = [int(v) for v in text.split("3x3::k:", 1)[1].split(":") if v.strip()][:81]
+    if len(values) != 81:
+        raise ValueError(f"expected 81 cells, got {len(values)}")
+    groups, sums = defaultdict(list), {}
+    for i, v in enumerate(values):
+        cage_id, cage_sum = v & 255, v >> 8
+        groups[cage_id].append((i // 9, i % 9))
+        if sums.setdefault(cage_id, cage_sum) != cage_sum:
+            raise ValueError(f"cage {cage_id} has two sums")
+    cages = [(sums[k], sorted(cells), 41) for k, cells in groups.items()]
+    if sum(s for s, _, _ in cages) != 405:
+        raise ValueError("cage sums don't total 405")
+    return cages
+
+
 def load_hard(name):
     """(cages, reported difficulty) of one file in tests/hard_puzzles."""
     text = open(os.path.join(HARD_DIR, name), encoding="utf-8").read()

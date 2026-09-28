@@ -328,6 +328,33 @@ def _uncage_options(groups, rejected):
             for x in g if x not in rejected and _connected([y for y in g if y != x])]
 
 
+def _plant_big(board, count, sizes=(7, 9), tries=500):
+    """`count` disjoint connected regions of 7-9 cells, each with distinct
+    digits (a cage can't repeat one), grown by random walks; fewer if some
+    won't fit. Random merging almost never builds these, as a 9-cell region
+    must hold every digit once."""
+    taken, regions = set(), []
+    for _ in range(count):
+        for _ in range(tries):
+            size = randint(*sizes)
+            start = choice([(r, c) for r in range(9) for c in range(9) if (r, c) not in taken])
+            region, digits = [start], {board[start[0]][start[1]]}
+            while len(region) < size:
+                frontier = [x for r, c in region for x in ((r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1))
+                            if 0 <= x[0] < 9 and 0 <= x[1] < 9 and x not in taken and x not in region
+                            and board[x[0]][x[1]] not in digits]
+                if not frontier:
+                    break
+                nxt = choice(frontier)
+                region.append(nxt)
+                digits.add(board[nxt[0]][nxt[1]])
+            if len(region) == size:
+                regions.append(region)
+                taken |= set(region)
+                break
+    return regions
+
+
 def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
                       long_size=(6, 8), max_singles=1, min_contradictions=0,
                       uncaged=0, big_cages=0, attempts=800):
@@ -351,7 +378,7 @@ def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
     `uncaged` leaves that many cells in no cage: once the layout is nearly
     done, one-cell cages (or edge cells of bigger cages) are dropped while the
     puzzle stays solvable without them - an uncaged cell gives nothing away.
-    `big_cages` asks for at least that many cages of 7-9 cells.
+    `big_cages` plants at least that many cages of 7-9 cells before merging.
 
     Returns (cages, solution), or None if this grid got too few cages first.
     """
@@ -370,11 +397,27 @@ def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
     board = create_board()
     populate_board(board)
     groups = [[(r, c)] for r in range(9) for c in range(9)]
+    if big_cages:
+        # Plant the big cages first. Two 45-cages can leave a swappable pair
+        # of cells even with every other cell given, so re-plant until the
+        # start is solvable.
+        for _ in range(20):
+            planted = _plant_big(board, big_cages)
+            if len(planted) < big_cages:
+                continue
+            in_big = {x for g in planted for x in g}
+            start = planted + [[(r, c)] for r in range(9) for c in range(9) if (r, c) not in in_big]
+            if solvable(start, max_level):
+                groups = start
+                break
+        else:
+            return None
     long_quota = randint(*long_cages)
     long_max = 9 if big_cages else randint(*long_size)
     free = []  # cells left out of every cage
-    # Uncaging a one-cell cage also removes a cage, so allow that many fewer
-    min_cages = cages[0] - uncaged
+    # Uncaged cells and big cages each use up cells that would otherwise
+    # form cages, so allow that many fewer
+    min_cages = cages[0] - uncaged - big_cages
     # Merging and uncaging only remove information, so a move that broke the
     # puzzle once would break it again later: never retry it.
     rejected, rejected_free = set(), set()

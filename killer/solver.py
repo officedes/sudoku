@@ -17,7 +17,8 @@ from killer.strategies import (
     eliminate_generalized_outies, eliminate_cage_interaction,
     eliminate_innies_outies, eliminate_large_sums, eliminate_hidden_killer_subsets,
     eliminate_naked_killer_subsets, eliminate_common_peers, eliminate_conflicting_combos,
-    eliminate_leftovers, eliminate_by_contradiction, filter_cage_combos,
+    eliminate_leftovers, eliminate_house_combos, eliminate_killer_fish, eliminate_als_xz,
+    eliminate_by_contradiction, filter_cage_combos,
 )
 
 # =============================================================================
@@ -48,7 +49,8 @@ DIRECT_STRATEGIES = [fn for fn in ALL_STRATEGIES if fn is not apply_candidate_el
 # Technique levels, each adding to the one before:
 #   1 direct strategies, 2 candidate elimination, 3 + advanced killer logic
 #   (rule of 45 over several houses, killer subsets, common peers, conflicting
-#   combos, leftovers), 4 + first-order contradiction.
+#   combos, leftovers, house combos, killer fish, ALS-XZ), 4 + first-order
+#   contradiction.
 LEVEL_NAMES = {1: "Direct", 2: "Candidate elimination", 3: "Advanced killer logic", 4: "Contradiction"}
 LEVEL_STRATEGIES = {
     1: DIRECT_STRATEGIES,
@@ -189,7 +191,8 @@ def get_candidate_elimination_steps(board, cages, prior_refined=None):
         advanced = [lambda cands, log, single_step, fn=fn: fn(cands, board, cages, log, single_step)
                     for fn in (eliminate_innies_outies, eliminate_hidden_killer_subsets,
                                eliminate_naked_killer_subsets, eliminate_common_peers,
-                               eliminate_conflicting_combos, eliminate_leftovers, eliminate_large_sums)]
+                               eliminate_conflicting_combos, eliminate_leftovers, eliminate_house_combos,
+                               eliminate_large_sums, eliminate_killer_fish, eliminate_als_xz)]
         for elim_fn in [eliminate_naked_subsets, eliminate_pointing, eliminate_box_line,
                          _cage_claim, _cage_pointing, _cage_box, eliminate_x_wing,
                          eliminate_hidden_subsets, eliminate_xy_wing, _outies,

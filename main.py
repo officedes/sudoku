@@ -1,7 +1,7 @@
 """Killer Sudoku — CLI entry point.
 
 Usage:
-    python main.py                          Generate a new puzzle (hard tier: level 3+)
+    python main.py                          Generate a new puzzle (hard tier: level 3)
     python main.py --level 4                Needs contradiction checks (levels: 1 direct,
                                             2 candidate elimination, 3 advanced killer logic, 4 contradiction)
     python main.py --contradictions 5       Harder: stuck 5+ times, each broken by a first-order contradiction sweep
@@ -259,13 +259,16 @@ def generate_at_level(min_level, workers, contradictions=0, uncaged=0, big_cages
         target = f"level 4, stuck {contradictions}+ times (first-order contradiction sweeps)"
     else:
         cages = (24, 27)
-        target = f"level {min_level}+ ({LEVEL_NAMES[min_level]} or harder)"
+        target = f"level {min_level} ({LEVEL_NAMES[min_level]})"
     if uncaged:
         target += f", {uncaged} uncaged cell{'s' if uncaged != 1 else ''}"
     if big_cages:
         target += f", {big_cages}+ cage{'s' if big_cages != 1 else ''} of 7-9 cells"
     print(f"Generating: {target}, {workers} grids in parallel")
-    job = dict(min_level=min_level, cages=cages, min_contradictions=contradictions,
+    # Exactly the asked level: solvable there, not one below (level 4 when
+    # asking for contradiction sweeps)
+    job = dict(min_level=min_level, max_level=4 if contradictions else min_level, cages=cages,
+               min_contradictions=contradictions,
                uncaged=uncaged, big_cages=big_cages)
     start = time.time()
     result = None
@@ -307,7 +310,7 @@ def main():
     gen.add_argument("--boards", type=int, default=10, help="Max boards to try (default: 10)")
     gen.add_argument("--tries", type=int, default=200, help="Cage layouts per board (default: 200)")
     gen.add_argument("--level", type=int, default=3, choices=range(1, 5),
-                     help="Minimum technique level the puzzle needs (default: 3, like the app's hard tier)")
+                     help="Technique level the puzzle needs (default: 3, like the app's hard tier)")
     gen.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2),
                      help="Grids tried in parallel (default: CPU count - 2)")
     gen.add_argument("--contradictions", type=int, default=0,

@@ -746,8 +746,8 @@ def play_mode(cages, solution):
                     if event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
                         cage_sum_val = int(marking_input) if marking_input.isdigit() else None
                         mark_color = [
-                            (255, 160, 160), (160, 200, 255), (160, 255, 160),
-                            (255, 220, 140), (200, 160, 255), (140, 240, 240),
+                            (240, 72, 72), (80, 150, 255), (70, 210, 110),
+                            (245, 175, 40), (175, 115, 250), (40, 200, 210),
                         ][len(user_cages) % 6]
                         mark_cells = sorted(selected)
                         new_mark = {"id": next_mark_id, "cells": mark_cells, "sum": cage_sum_val, "color": mark_color,
@@ -990,9 +990,6 @@ def play_mode(cages, solution):
         def cell_xy(r, c):
             return GRID_OFFSET_X + c * CELL_SIZE, GRID_OFFSET_Y + r * CELL_SIZE
 
-        def outline(cells, color, inset, width=1):
-            draw_outline(screen, cells, color, inset, width, GRID_OFFSET_X, GRID_OFFSET_Y, CELL_SIZE)
-
         def soft(color):
             """Status colours were picked for a light theme; lift them for the dark one."""
             return tuple(min(255, int(v * 0.5 + 128)) for v in color)
@@ -1041,17 +1038,6 @@ def play_mode(cages, solution):
 
         draw_grid_lines(screen, GRID_OFFSET_X, GRID_OFFSET_Y, CELL_SIZE)
         draw_cages(screen, cages, cell_bg, font_cage_sum, GRID_OFFSET_X, GRID_OFFSET_Y, CELL_SIZE)
-        # The player's marks, inside the cage outlines
-        for uc in user_cages:
-            outline(uc["cells"], uc["color"], 10, 2)
-
-        for uc in user_cages:
-            if uc.get("sum") is not None:
-                r, c = min(uc["cells"])
-                x, y = cell_xy(r, c)
-                stxt = font_cage_sum.render(str(uc["sum"]), True, uc["color"])
-                screen.blit(stxt, (x + CELL_SIZE - stxt.get_width() - 4, y + 1))
-
         # Digits and pencil marks
         for r in range(9):
             for c in range(9):
@@ -1081,6 +1067,22 @@ def play_mode(cages, solution):
                             pygame.draw.rect(screen, T["hl"], (cx - sub / 2 + 1, cy - sub / 2 + 1, sub - 2, sub - 2),
                                              1, border_radius=3)
                         screen.blit(ptxt, (cx - ptxt.get_width() / 2, cy - ptxt.get_height() / 2))
+
+        # The player's marks on top of the digits, like the app: a dashed box in
+        # each marked cell, and the sum on a patch of the cell's colour
+        for uc in user_cages:
+            for r, c in uc["cells"]:
+                x, y = cell_xy(r, c)
+                x1, y1, x2, y2 = x + 3, y + 3, x + CELL_SIZE - 4, y + CELL_SIZE - 4
+                for a, b in (((x1, y1), (x2, y1)), ((x1, y2), (x2, y2)), ((x1, y1), (x1, y2)), ((x2, y1), (x2, y2))):
+                    draw_dashed(screen, a, b, uc["color"], 2, dash=6, gap=4)
+            if uc.get("sum") is not None:
+                r, c = min(uc["cells"])
+                x, y = cell_xy(r, c)
+                stxt = font_cage_sum.render(str(uc["sum"]), True, uc["color"])
+                label = pygame.Rect(x + CELL_SIZE - stxt.get_width() - 8, y + 1, stxt.get_width() + 4, stxt.get_height())
+                pygame.draw.rect(screen, cell_bg[(r, c)], label)
+                screen.blit(stxt, (label.x + 2, label.y))
 
         # --- Top bar: mode, timer, progress ---
         elapsed = _time.time() - start_time

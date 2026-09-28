@@ -17,7 +17,6 @@ Play controls:
 import pygame
 import os
 import sys
-import textwrap
 
 # --- Load puzzle data ---
 
@@ -83,87 +82,127 @@ def load_and_solve(filename):
     return cages, solution, steps
 
 
-# --- Color palette for cages ---
+# --- Dark theme shared by play mode and the step-through solver (modelled on the phone app) ---
 
-CAGE_COLORS = [
-    (255, 179, 186),  # light pink
-    (186, 225, 255),  # light blue
-    (186, 255, 201),  # light green
-    (255, 255, 186),  # light yellow
-    (225, 186, 255),  # light purple
-    (255, 218, 185),  # peach
-    (185, 255, 255),  # light cyan
-    (255, 200, 221),  # rose
-    (200, 255, 200),  # mint
-    (220, 220, 255),  # lavender
-    (255, 235, 205),  # blanched almond
-    (205, 255, 235),  # aquamarine
-    (240, 200, 200),  # dusty rose
-    (200, 240, 200),  # pale green
-    (200, 200, 240),  # pale blue
-    (240, 240, 200),  # pale yellow
-    (240, 200, 240),  # pale magenta
-    (200, 240, 240),  # pale cyan
-    (230, 210, 190),  # tan
-    (190, 230, 210),  # seafoam
-    (210, 190, 230),  # wisteria
-    (230, 230, 190),  # khaki
-    (230, 190, 210),  # mauve
-    (190, 210, 230),  # steel blue
-    (220, 200, 180),  # sand
-    (180, 220, 200),  # sage
-    (200, 180, 220),  # lilac
-    (220, 220, 180),  # cream
-    (220, 180, 200),  # blush
-    (180, 200, 220),  # powder blue
-    (210, 210, 190),  # stone
-    (190, 210, 210),  # ice
-    (210, 190, 210),  # thistle
-    (215, 205, 195),  # warm grey
-    (195, 215, 205),  # cool grey
-]
-
-HIGHLIGHT_COLOR = (255, 255, 100)  # bright yellow for just-placed cell
-GRID_BG = (255, 255, 255)
-GRID_LINE = (0, 0, 0)
-GRID_LINE_THIN = (180, 180, 180)
-TEXT_COLOR = (30, 30, 30)
-TEXT_FADED = (160, 160, 160)
-EXPLANATION_BG = (245, 245, 250)
-STEP_HIGHLIGHT = (70, 130, 70)
+THEME = {
+    "bg": (38, 40, 46), "cell": (47, 49, 55), "uncaged": (40, 42, 48),
+    "house": (44, 62, 88), "selected": (62, 92, 140), "selected_edge": (120, 160, 225),
+    "multi": (56, 82, 124), "error_bg": (110, 45, 50), "blocked": (60, 64, 76), "hl": (240, 168, 60),
+    "grid": (62, 66, 76), "box": (96, 142, 222), "cage": (206, 208, 214),
+    "label": (236, 238, 242), "digit": (226, 232, 246), "digit_bad": (245, 105, 105),
+    "pencil": (158, 164, 182), "pencil_bad": (235, 90, 90), "pencil_must": (110, 215, 140),
+    "text": (214, 218, 228), "muted": (130, 136, 152),
+    "chip": (52, 60, 76), "chip_edge": (110, 132, 176), "chip_off": (60, 62, 70),
+    "btn": (52, 56, 66), "btn_hover": (66, 72, 86), "btn_active": (70, 110, 90),
+    "key": (40, 48, 64), "key_edge": (64, 78, 104), "key_hover": (54, 66, 88),
+    "tip": (30, 32, 38), "tip_edge": (96, 102, 120),
+    "removed_bg": (120, 48, 52), "info": (120, 160, 235), "elim": (240, 168, 60), "place": (110, 215, 140),
+}
 
 
-def build_cage_color_map(cages):
-    """Assign a color to each cage and build cell->color + cell->cage_index maps."""
-    cell_color = {}
-    cell_cage = {}
-    for i, (cage_sum, cells, _) in enumerate(cages):
-        color = CAGE_COLORS[i % len(CAGE_COLORS)]
-        for cell in cells:
-            cell_color[tuple(cell)] = color
-            cell_cage[tuple(cell)] = i
-    return cell_color, cell_cage
+def build_cell_cage_map(cages):
+    """cell -> index of its cage."""
+    return {tuple(cell): i for i, (_, cells, _) in enumerate(cages) for cell in cells}
 
 
-def build_cage_borders(cages):
-    """For each cell, determine which edges are cage boundaries (not shared with same cage)."""
-    cell_cage = {}
-    for i, (_, cells, _) in enumerate(cages):
-        for cell in cells:
-            cell_cage[tuple(cell)] = i
+def draw_dashed(screen, p1, p2, color, width=1, dash=5, gap=4):
+    """Dashed axis-aligned line, phased on absolute position so dashes line up."""
+    (x1, y1), (x2, y2) = p1, p2
+    horizontal = y1 == y2
+    a, b = sorted((x1, x2) if horizontal else (y1, y2))
+    s = a - a % (dash + gap)
+    while s < b:
+        lo, hi = max(s, a), min(s + dash, b)
+        if lo < hi:
+            if horizontal:
+                pygame.draw.line(screen, color, (lo, y1), (hi, y1), width)
+            else:
+                pygame.draw.line(screen, color, (x1, lo), (x1, hi), width)
+        s += dash + gap
 
-    borders = {}
-    for r in range(9):
-        for c in range(9):
-            cage_id = cell_cage.get((r, c))
-            b = {
-                "top": r == 0 or cell_cage.get((r - 1, c)) != cage_id,
-                "bottom": r == 8 or cell_cage.get((r + 1, c)) != cage_id,
-                "left": c == 0 or cell_cage.get((r, c - 1)) != cage_id,
-                "right": c == 8 or cell_cage.get((r, c + 1)) != cage_id,
-            }
-            borders[(r, c)] = b
-    return borders
+
+def draw_outline(screen, cells, color, inset, width, gx, gy, size):
+    """Dashed outline inset inside a region of cells; the inset lines meet at inner corners."""
+    cs = set(map(tuple, cells))
+
+    def inn(r, c):
+        return (r, c) in cs
+
+    for (r, c) in cs:
+        x, y = gx + c * size, gy + r * size
+        if not inn(r - 1, c):
+            x1 = x + inset if not inn(r, c - 1) else (x - inset if inn(r - 1, c - 1) else x)
+            x2 = x + size - inset if not inn(r, c + 1) else (x + size + inset if inn(r - 1, c + 1) else x + size)
+            draw_dashed(screen, (x1, y + inset), (x2, y + inset), color, width)
+        if not inn(r + 1, c):
+            x1 = x + inset if not inn(r, c - 1) else (x - inset if inn(r + 1, c - 1) else x)
+            x2 = x + size - inset if not inn(r, c + 1) else (x + size + inset if inn(r + 1, c + 1) else x + size)
+            draw_dashed(screen, (x1, y + size - inset), (x2, y + size - inset), color, width)
+        if not inn(r, c - 1):
+            y1 = y + inset if not inn(r - 1, c) else (y - inset if inn(r - 1, c - 1) else y)
+            y2 = y + size - inset if not inn(r + 1, c) else (y + size + inset if inn(r + 1, c - 1) else y + size)
+            draw_dashed(screen, (x + inset, y1), (x + inset, y2), color, width)
+        if not inn(r, c + 1):
+            y1 = y + inset if not inn(r - 1, c) else (y - inset if inn(r - 1, c + 1) else y)
+            y2 = y + size - inset if not inn(r + 1, c) else (y + size + inset if inn(r + 1, c + 1) else y + size)
+            draw_dashed(screen, (x + size - inset, y1), (x + size - inset, y2), color, width)
+
+
+def draw_grid_lines(screen, gx, gy, size):
+    """Thin cell lines, blue 3x3 box lines and a rounded outer border."""
+    total = size * 9
+    for i in range(10):
+        p = i * size
+        pygame.draw.line(screen, THEME["grid"], (gx + p, gy), (gx + p, gy + total), 1)
+        pygame.draw.line(screen, THEME["grid"], (gx, gy + p), (gx + total, gy + p), 1)
+    for i in (3, 6):
+        p = i * size
+        pygame.draw.line(screen, THEME["box"], (gx + p, gy), (gx + p, gy + total), 2)
+        pygame.draw.line(screen, THEME["box"], (gx, gy + p), (gx + total, gy + p), 2)
+    pygame.draw.rect(screen, THEME["grid"], (gx, gy, total + 1, total + 1), 2, border_radius=6)
+
+
+def draw_cages(screen, cages, cell_bg, font, gx, gy, size):
+    """Dashed inset cage outlines, with sum labels cutting through them like the app."""
+    for _, cells, _ in cages:
+        draw_outline(screen, cells, THEME["cage"], 5, 1, gx, gy, size)
+    for cage_sum, cells, _ in cages:
+        r, c = get_cage_label_cell(cells)
+        x, y = gx + c * size, gy + r * size
+        txt = font.render(str(cage_sum), True, THEME["label"])
+        pygame.draw.rect(screen, cell_bg[(r, c)], (x + 2, y + 1, txt.get_width() + 3, txt.get_height() - 2))
+        screen.blit(txt, (x + 3, y))
+
+
+def draw_tooltip(screen, lines, bold_rows, pos, fonts, window):
+    """Dark tooltip box near the mouse, kept inside the window."""
+    font, font_bold = fonts
+    mx, my = pos
+    tip_w = max(font.size(line)[0] for line in lines) + 16
+    tip_h = len(lines) * 20 + 8
+    tip_x = mx + 15 if mx + 15 + tip_w <= window[0] - 5 else mx - tip_w - 10
+    tip_y = my + 15 if my + 15 + tip_h <= window[1] - 5 else my - tip_h - 10
+    rect = pygame.Rect(max(5, tip_x), max(5, tip_y), tip_w, tip_h)
+    pygame.draw.rect(screen, THEME["tip"], rect, border_radius=6)
+    pygame.draw.rect(screen, THEME["tip_edge"], rect, 1, border_radius=6)
+    for j, line in enumerate(lines):
+        f = font_bold if j in bold_rows else font
+        screen.blit(f.render(line, True, THEME["text"]), (rect.x + 8, rect.y + 4 + j * 20))
+
+
+def wrap_text(lines, font, width):
+    """Word-wrap lines to a pixel width, keeping each line's indent."""
+    out = []
+    for line in lines:
+        indent = len(line) - len(line.lstrip())
+        cur = " " * indent
+        for w in line.split():
+            if font.size(cur + w)[0] > width and cur.strip():
+                out.append(cur.rstrip())
+                cur = " " * (indent + 2)
+            cur += w + " "
+        out.append(cur.rstrip())
+    return out
 
 
 def get_cage_label_cell(cells):
@@ -226,19 +265,7 @@ def play_mode(cages, solution):
     WINDOW_W = GRID_OFFSET_X * 2 + GRID_SIZE
     WINDOW_H = PAD_Y + 3 * (PAD_KEY_H + 6) + 30
 
-    T = {
-        "bg": (38, 40, 46), "cell": (47, 49, 55), "uncaged": (40, 42, 48),
-        "house": (44, 62, 88), "selected": (62, 92, 140), "selected_edge": (120, 160, 225),
-        "multi": (56, 82, 124), "error_bg": (110, 45, 50), "blocked": (60, 64, 76), "hl": (240, 168, 60),
-        "grid": (62, 66, 76), "box": (96, 142, 222), "cage": (206, 208, 214),
-        "label": (236, 238, 242), "digit": (226, 232, 246), "digit_bad": (245, 105, 105),
-        "pencil": (158, 164, 182), "pencil_bad": (235, 90, 90), "pencil_must": (110, 215, 140),
-        "text": (214, 218, 228), "muted": (130, 136, 152),
-        "chip": (52, 60, 76), "chip_edge": (110, 132, 176), "chip_off": (60, 62, 70),
-        "btn": (52, 56, 66), "btn_hover": (66, 72, 86), "btn_active": (70, 110, 90),
-        "key": (40, 48, 64), "key_edge": (64, 78, 104), "key_hover": (54, 66, 88),
-        "tip": (30, 32, 38), "tip_edge": (96, 102, 120),
-    }
+    T = THEME
 
     screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
     pygame.display.set_caption("Killer Sudoku — Play Mode")
@@ -260,7 +287,7 @@ def play_mode(cages, solution):
     font_key_cand = pygame.font.SysFont("segoeui", 17)
     font_pad_label = pygame.font.SysFont("segoeui", 13, bold=True)
 
-    _, cell_cage_map = build_cage_color_map(cages)
+    cell_cage_map = build_cell_cage_map(cages)
 
     # Button rects (rebuilt each frame)
     button_rects = {}  # name -> pygame.Rect
@@ -902,47 +929,8 @@ def play_mode(cages, solution):
         def cell_xy(r, c):
             return GRID_OFFSET_X + c * CELL_SIZE, GRID_OFFSET_Y + r * CELL_SIZE
 
-        def dashed(p1, p2, color, width=1, dash=5, gap=4):
-            """Dashed axis-aligned line, phased on absolute position so dashes line up."""
-            (x1, y1), (x2, y2) = p1, p2
-            horizontal = y1 == y2
-            a, b = sorted((x1, x2) if horizontal else (y1, y2))
-            s = a - a % (dash + gap)
-            while s < b:
-                lo, hi = max(s, a), min(s + dash, b)
-                if lo < hi:
-                    if horizontal:
-                        pygame.draw.line(screen, color, (lo, y1), (hi, y1), width)
-                    else:
-                        pygame.draw.line(screen, color, (x1, lo), (x1, hi), width)
-                s += dash + gap
-
         def outline(cells, color, inset, width=1):
-            """Dashed outline inset inside a region; the inset lines meet at inner corners."""
-            cs = set(map(tuple, cells))
-            S = CELL_SIZE
-
-            def inn(r, c):
-                return (r, c) in cs
-
-            for (r, c) in cs:
-                x, y = cell_xy(r, c)
-                if not inn(r - 1, c):
-                    x1 = x + inset if not inn(r, c - 1) else (x - inset if inn(r - 1, c - 1) else x)
-                    x2 = x + S - inset if not inn(r, c + 1) else (x + S + inset if inn(r - 1, c + 1) else x + S)
-                    dashed((x1, y + inset), (x2, y + inset), color, width)
-                if not inn(r + 1, c):
-                    x1 = x + inset if not inn(r, c - 1) else (x - inset if inn(r + 1, c - 1) else x)
-                    x2 = x + S - inset if not inn(r, c + 1) else (x + S + inset if inn(r + 1, c + 1) else x + S)
-                    dashed((x1, y + S - inset), (x2, y + S - inset), color, width)
-                if not inn(r, c - 1):
-                    y1 = y + inset if not inn(r - 1, c) else (y - inset if inn(r - 1, c - 1) else y)
-                    y2 = y + S - inset if not inn(r + 1, c) else (y + S + inset if inn(r + 1, c - 1) else y + S)
-                    dashed((x + inset, y1), (x + inset, y2), color, width)
-                if not inn(r, c + 1):
-                    y1 = y + inset if not inn(r - 1, c) else (y - inset if inn(r - 1, c + 1) else y)
-                    y2 = y + S - inset if not inn(r + 1, c) else (y + S + inset if inn(r + 1, c + 1) else y + S)
-                    dashed((x + S - inset, y1), (x + S - inset, y2), color, width)
+            draw_outline(screen, cells, color, inset, width, GRID_OFFSET_X, GRID_OFFSET_Y, CELL_SIZE)
 
         def soft(color):
             """Status colours were picked for a light theme; lift them for the dark one."""
@@ -992,35 +980,12 @@ def play_mode(cages, solution):
             pygame.draw.rect(screen, T["selected_edge"], (x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2), 2, border_radius=7)
             cell_bg[(sr, sc)] = T["selected"]
 
-        # Grid lines, then the blue 3x3 box lines on top
-        for i in range(10):
-            p = i * CELL_SIZE
-            pygame.draw.line(screen, T["grid"], (GRID_OFFSET_X + p, GRID_OFFSET_Y),
-                             (GRID_OFFSET_X + p, GRID_OFFSET_Y + GRID_SIZE), 1)
-            pygame.draw.line(screen, T["grid"], (GRID_OFFSET_X, GRID_OFFSET_Y + p),
-                             (GRID_OFFSET_X + GRID_SIZE, GRID_OFFSET_Y + p), 1)
-        for i in (3, 6):
-            p = i * CELL_SIZE
-            pygame.draw.line(screen, T["box"], (GRID_OFFSET_X + p, GRID_OFFSET_Y),
-                             (GRID_OFFSET_X + p, GRID_OFFSET_Y + GRID_SIZE), 2)
-            pygame.draw.line(screen, T["box"], (GRID_OFFSET_X, GRID_OFFSET_Y + p),
-                             (GRID_OFFSET_X + GRID_SIZE, GRID_OFFSET_Y + p), 2)
-        pygame.draw.rect(screen, T["grid"], (GRID_OFFSET_X, GRID_OFFSET_Y, GRID_SIZE + 1, GRID_SIZE + 1), 2,
-                         border_radius=6)
-
-        # Cage outlines (dashed, inset) and the player's marks inside them
-        for _, cage_cells_list, _ in cages:
-            outline(cage_cells_list, T["cage"], 5)
+        draw_grid_lines(screen, GRID_OFFSET_X, GRID_OFFSET_Y, CELL_SIZE)
+        draw_cages(screen, cages, cell_bg, font_cage_sum, GRID_OFFSET_X, GRID_OFFSET_Y, CELL_SIZE)
+        # The player's marks, inside the cage outlines
         for uc in user_cages:
             outline(uc["cells"], uc["color"], 10, 2)
 
-        # Cage sum labels, cutting through the dashed line like the app
-        for cage_sum, cage_cells_list, _ in cages:
-            r, c = get_cage_label_cell(cage_cells_list)
-            x, y = cell_xy(r, c)
-            txt = font_cage_sum.render(str(cage_sum), True, T["label"])
-            pygame.draw.rect(screen, cell_bg[(r, c)], (x + 2, y + 1, txt.get_width() + 3, txt.get_height() - 2))
-            screen.blit(txt, (x + 3, y))
         for uc in user_cages:
             if uc.get("sum") is not None:
                 r, c = min(uc["cells"])
@@ -1200,16 +1165,7 @@ def play_mode(cages, solution):
             pygame.draw.rect(screen, T["hl"], panel, 1, border_radius=10)
             title = font_top.render(f"Hint: {hint_panel['title']}", True, T["hl"])
             screen.blit(title, (panel.x + 12, panel.y + 8))
-            wrapped = []
-            for line in hint_panel["lines"]:
-                indent = len(line) - len(line.lstrip())
-                words, cur = line.split(), " " * indent
-                for w in words:
-                    if font_tooltip.size(cur + w)[0] > panel.w - 28 and cur.strip():
-                        wrapped.append(cur.rstrip())
-                        cur = " " * (indent + 2)
-                    cur += w + " "
-                wrapped.append(cur.rstrip())
+            wrapped = wrap_text(hint_panel["lines"], font_tooltip, panel.w - 28)
             room = (panel.h - 58) // 19
             if len(wrapped) > room:
                 wrapped = wrapped[:room - 1] + [f"... (+{len(wrapped) - room + 1} more lines)"]
@@ -1257,23 +1213,8 @@ def play_mode(cages, solution):
                         tip_lines.append(line)
                         tip_lines.append(f"({len(combos)} possible)")
             if tip_lines:
-                tip_w = max(font_tooltip.size(l)[0] for l in tip_lines) + 16
-                tip_h = len(tip_lines) * 20 + 8
-                tip_x = min(mx + 15, WINDOW_W - tip_w - 5)
-                tip_y = min(my + 15, WINDOW_H - tip_h - 5)
-                if tip_x + tip_w > WINDOW_W - 5:
-                    tip_x = mx - tip_w - 10
-                if tip_y + tip_h > WINDOW_H - 5:
-                    tip_y = my - tip_h - 10
-                tip_x = max(5, tip_x)
-                tip_y = max(5, tip_y)
-                tip_rect = pygame.Rect(tip_x, tip_y, tip_w, tip_h)
-                pygame.draw.rect(screen, T["tip"], tip_rect, border_radius=6)
-                pygame.draw.rect(screen, T["tip_edge"], tip_rect, 1, border_radius=6)
-                for j, line in enumerate(tip_lines):
-                    f = font_tooltip_bold if j in bold_rows else font_tooltip
-                    txt = f.render(line, True, T["text"])
-                    screen.blit(txt, (tip_x + 8, tip_y + 4 + j * 20))
+                draw_tooltip(screen, tip_lines, bold_rows, (mx, my), (font_tooltip, font_tooltip_bold),
+                             (WINDOW_W, WINDOW_H))
 
         pygame.display.flip()
         clock.tick(60)
@@ -1314,36 +1255,33 @@ def main():
         print_steps(cages, solution, steps)
         return
 
-    # --- Pygame setup ---
+    # --- Pygame setup: step-through solver in the same dark style as play mode ---
     pygame.init()
-
-    CELL_SIZE = 64
-    GRID_OFFSET_X = 30
-    GRID_OFFSET_Y = 30
+    T = THEME
+    CELL_SIZE = 60
     GRID_SIZE = CELL_SIZE * 9
-    LEGEND_WIDTH = 280
-    EXPLANATION_HEIGHT = 220
-    WINDOW_W = GRID_OFFSET_X * 2 + GRID_SIZE + LEGEND_WIDTH
-    WINDOW_H = GRID_OFFSET_Y * 2 + GRID_SIZE + EXPLANATION_HEIGHT
+    GRID_OFFSET_X = 20
+    GRID_OFFSET_Y = 52
+    PANEL_X = GRID_OFFSET_X + GRID_SIZE + 20
+    PANEL_W = 380
+    WINDOW_W = PANEL_X + PANEL_W + 20
+    WINDOW_H = GRID_OFFSET_Y + GRID_SIZE + 44
 
     screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
     pygame.display.set_caption(f"Killer Sudoku — {filename}")
 
-    font_num = pygame.font.SysFont("consolas", 28, bold=True)
-    font_small = pygame.font.SysFont("consolas", 12)
-    font_cage_sum = pygame.font.SysFont("consolas", 11, bold=True)
-    font_explain = pygame.font.SysFont("segoeui", 15)
-    font_explain_bold = pygame.font.SysFont("segoeui", 15, bold=True)
-    font_step_counter = pygame.font.SysFont("segoeui", 18, bold=True)
-    font_legend_title = pygame.font.SysFont("segoeui", 16, bold=True)
-    font_legend = pygame.font.SysFont("segoeui", 13)
+    font_num = pygame.font.SysFont("segoeui", 30, bold=True)
+    font_pencil = pygame.font.SysFont("segoeui", 12)
+    font_cage_sum = pygame.font.SysFont("segoeui", 12, bold=True)
+    font_top = pygame.font.SysFont("segoeui", 16, bold=True)
+    font_head = pygame.font.SysFont("segoeui", 17, bold=True)
+    font_explain = pygame.font.SysFont("segoeui", 14)
     font_controls = pygame.font.SysFont("segoeui", 12)
-    font_pencil = pygame.font.SysFont("consolas", 11)
     font_tooltip = pygame.font.SysFont("segoeui", 14)
     font_tooltip_bold = pygame.font.SysFont("segoeui", 14, bold=True)
 
-    cell_color_map, cell_cage_map = build_cage_color_map(cages)
-    cage_borders = build_cage_borders(cages)
+    cell_cage_map = build_cell_cage_map(cages)
+    caged_cells = set(cell_cage_map)
 
     # State
     current_step = -1  # -1 = empty board
@@ -1360,6 +1298,19 @@ def main():
     clock = pygame.time.Clock()
     running = True
 
+    def step_forward():
+        nonlocal current_step, highlight_cell, candidates_dirty, explain_scroll
+        current_step += 1
+        s = steps[current_step]
+        if s.get("type") == "placement" and "cell" in s:
+            r, c = s["cell"]
+            board[r][c] = s["value"]
+            highlight_cell = (r, c)
+            candidates_dirty = True
+        else:
+            highlight_cell = None  # elimination step, no cell placed
+        explain_scroll = 0
+
     while running:
         now = pygame.time.get_ticks()
 
@@ -1371,16 +1322,7 @@ def main():
                     running = False
                 elif event.key in (pygame.K_SPACE, pygame.K_RIGHT):
                     if current_step < len(steps) - 1:
-                        current_step += 1
-                        s = steps[current_step]
-                        if s.get("type") == "placement" and "cell" in s:
-                            r, c = s["cell"]
-                            board[r][c] = s["value"]
-                            highlight_cell = (r, c)
-                            candidates_dirty = True
-                        else:
-                            highlight_cell = None  # elimination step, no cell placed
-                        explain_scroll = 0
+                        step_forward()
                         last_auto_time = now
                 elif event.key == pygame.K_LEFT:
                     if current_step >= 0:
@@ -1416,15 +1358,7 @@ def main():
 
         # Auto-play
         if auto_play and current_step < len(steps) - 1 and now - last_auto_time >= auto_delay:
-            current_step += 1
-            s = steps[current_step]
-            if s.get("type") == "placement" and "cell" in s:
-                r, c = s["cell"]
-                board[r][c] = s["value"]
-                highlight_cell = (r, c)
-                candidates_dirty = True
-            else:
-                highlight_cell = None
+            step_forward()
             last_auto_time = now
             if current_step >= len(steps) - 1:
                 auto_play = False
@@ -1436,271 +1370,147 @@ def main():
             candidates_dirty = False
 
         # --- Draw ---
-        screen.fill((250, 250, 252))
-
-        # Draw cells
+        screen.fill(T["bg"])
+        cell_bg = {}
         for r in range(9):
             for c in range(9):
                 x = GRID_OFFSET_X + c * CELL_SIZE
                 y = GRID_OFFSET_Y + r * CELL_SIZE
-                rect = pygame.Rect(x, y, CELL_SIZE, CELL_SIZE)
+                bg = T["cell"] if (r, c) in caged_cells else T["uncaged"]
+                cell_bg[(r, c)] = bg
+                pygame.draw.rect(screen, bg, (x, y, CELL_SIZE, CELL_SIZE))
+        draw_grid_lines(screen, GRID_OFFSET_X, GRID_OFFSET_Y, CELL_SIZE)
+        draw_cages(screen, cages, cell_bg, font_cage_sum, GRID_OFFSET_X, GRID_OFFSET_Y, CELL_SIZE)
 
-                # Cell background
-                if highlight_cell == (r, c):
-                    pygame.draw.rect(screen, HIGHLIGHT_COLOR, rect)
-                else:
-                    color = cell_color_map.get((r, c), GRID_BG)
-                    pygame.draw.rect(screen, color, rect)
-
-                # Cage borders (thick dashed)
-                borders = cage_borders.get((r, c), {})
-                bw = 2
-                if borders.get("top"):
-                    pygame.draw.line(screen, (50, 50, 50), (x, y), (x + CELL_SIZE, y), bw)
-                if borders.get("bottom"):
-                    pygame.draw.line(screen, (50, 50, 50), (x, y + CELL_SIZE), (x + CELL_SIZE, y + CELL_SIZE), bw)
-                if borders.get("left"):
-                    pygame.draw.line(screen, (50, 50, 50), (x, y), (x, y + CELL_SIZE), bw)
-                if borders.get("right"):
-                    pygame.draw.line(screen, (50, 50, 50), (x + CELL_SIZE, y), (x + CELL_SIZE, y + CELL_SIZE), bw)
-
-                # Number or pencil marks
-                val = board[r][c]
-                if val != 0:
-                    txt = font_num.render(str(val), True, TEXT_COLOR)
-                    tx = x + (CELL_SIZE - txt.get_width()) // 2
-                    ty = y + (CELL_SIZE - txt.get_height()) // 2
-                    screen.blit(txt, (tx, ty))
-                elif current_step >= 0:
-                    # Draw pencil marks — use step's candidates for elimination steps,
-                    # live-computed for placement steps
-                    key = f"{_COL[c]}{r+1}"
-                    s = steps[current_step]
-                    step_cands = s.get("candidates", {})
-                    cand_source = step_cands if step_cands else live_candidates
-                    # Get previous step's candidates to detect removals
-                    prev_cands = {}
-                    if current_step > 0:
-                        ps = steps[current_step - 1]
-                        ps_cands = ps.get("candidates", {})
-                        prev_cands = ps_cands if ps_cands else prev_live_candidates
-                    cur_nums = set(cand_source.get(key, []))
-                    prev_nums = set(prev_cands.get(key, []))
-                    removed_nums = prev_nums - cur_nums
-                    # Draw current candidates + removed ones with red bg
-                    all_to_draw = cur_nums | removed_nums
-                    for n in sorted(all_to_draw):
-                        pr = (n - 1) // 3
-                        pc = (n - 1) % 3
-                        px = x + 14 + pc * 14
-                        py = y + 14 + pr * 14
-                        if n in removed_nums:
-                            # Red background for removed candidate
-                            red_rect = pygame.Rect(px - 1, py, 12, 14)
-                            pygame.draw.rect(screen, (255, 100, 100), red_rect, border_radius=2)
-                            ptxt = font_pencil.render(str(n), True, (180, 30, 30))
-                        else:
-                            ptxt = font_pencil.render(str(n), True, (120, 120, 150))
-                        screen.blit(ptxt, (px, py))
-
-        # Draw cage sum labels (top-left corner of each cage)
-        for i, (cage_sum, cells, _) in enumerate(cages):
-            label_cell = get_cage_label_cell(cells)
-            r, c = label_cell
-            x = GRID_OFFSET_X + c * CELL_SIZE + 3
-            y = GRID_OFFSET_Y + r * CELL_SIZE + 1
-            txt = font_cage_sum.render(str(cage_sum), True, (100, 30, 30))
-            screen.blit(txt, (x, y))
-
-        # Draw 3x3 box borders as subtle dashed lines
-        dash_color = (140, 140, 160)
-        dash_len = 6
-        gap_len = 4
-        for i in range(1, 3):  # only inner lines, not outer edge
-            bx = GRID_OFFSET_X + i * 3 * CELL_SIZE
-            by = GRID_OFFSET_Y + i * 3 * CELL_SIZE
-            # Vertical dashed line
-            y = GRID_OFFSET_Y
-            while y < GRID_OFFSET_Y + GRID_SIZE:
-                end_y = min(y + dash_len, GRID_OFFSET_Y + GRID_SIZE)
-                pygame.draw.line(screen, dash_color, (bx, y), (bx, end_y), 2)
-                y += dash_len + gap_len
-            # Horizontal dashed line
-            x = GRID_OFFSET_X
-            while x < GRID_OFFSET_X + GRID_SIZE:
-                end_x = min(x + dash_len, GRID_OFFSET_X + GRID_SIZE)
-                pygame.draw.line(screen, dash_color, (x, by), (end_x, by), 2)
-                x += dash_len + gap_len
-        # Outer grid border (solid, thin)
-        outer = pygame.Rect(GRID_OFFSET_X, GRID_OFFSET_Y, GRID_SIZE, GRID_SIZE)
-        pygame.draw.rect(screen, (80, 80, 80), outer, 2)
-
-        # --- Legend (right side) ---
-        legend_x = GRID_OFFSET_X + GRID_SIZE + 15
-        legend_y = GRID_OFFSET_Y
-
-        title = font_legend_title.render("CAGES", True, TEXT_COLOR)
-        screen.blit(title, (legend_x, legend_y))
-        legend_y += 24
-
-        # Show cages in a scrollable-ish compact list
-        max_legend_items = 28
-        for i, (cage_sum, cells, _) in enumerate(cages):
-            if i >= max_legend_items:
-                more = font_legend.render(f"... +{len(cages) - max_legend_items} more", True, TEXT_FADED)
-                screen.blit(more, (legend_x, legend_y))
-                break
-            color = CAGE_COLORS[i % len(CAGE_COLORS)]
-            swatch = pygame.Rect(legend_x, legend_y + 1, 14, 14)
-            pygame.draw.rect(screen, color, swatch)
-            pygame.draw.rect(screen, (100, 100, 100), swatch, 1)
-            cell_str = ",".join(f"{_COL[c]}{r+1}" for r, c in cells)
-            label = font_legend.render(f" {cage_sum:2d}  {cell_str}", True, TEXT_COLOR)
-            screen.blit(label, (legend_x + 18, legend_y))
-            legend_y += 17
-
-        # --- Explanation panel (bottom) ---
-        panel_y = GRID_OFFSET_Y + GRID_SIZE + 10
-        panel_rect = pygame.Rect(GRID_OFFSET_X, panel_y, WINDOW_W - GRID_OFFSET_X * 2, EXPLANATION_HEIGHT - 15)
-        pygame.draw.rect(screen, EXPLANATION_BG, panel_rect, border_radius=6)
-        pygame.draw.rect(screen, (200, 200, 210), panel_rect, 1, border_radius=6)
-
+        # Candidates this step removed are shown struck on red; the source is the
+        # step's own snapshot, or the live grid for steps without one
+        step_cands, prev_cands = {}, {}
         if current_step >= 0:
             s = steps[current_step]
-            stype = s.get("type", "placement")
-            # Step counter
-            label_map = {"info": "Info", "elimination": "Elimination", "placement": "Placement"}
-            color_map = {"info": (50, 80, 160), "elimination": (180, 100, 30), "placement": STEP_HIGHLIGHT}
-            step_label = label_map.get(stype, "Step")
-            counter_color = color_map.get(stype, STEP_HIGHLIGHT)
-            counter_txt = font_step_counter.render(
-                f"Step {current_step + 1}/{len(steps)}  [{step_label}]", True, counter_color
-            )
-            screen.blit(counter_txt, (GRID_OFFSET_X + 10, panel_y + 6))
+            step_cands = s.get("candidates") or live_candidates
+            if current_step > 0:
+                prev_cands = steps[current_step - 1].get("candidates") or prev_live_candidates
+        sub = (CELL_SIZE - 16) / 3
+        for r in range(9):
+            for c in range(9):
+                x = GRID_OFFSET_X + c * CELL_SIZE
+                y = GRID_OFFSET_Y + r * CELL_SIZE
+                val = board[r][c]
+                if val:
+                    txt = font_num.render(str(val), True, T["digit"])
+                    screen.blit(txt, (x + (CELL_SIZE - txt.get_width()) // 2,
+                                      y + (CELL_SIZE - txt.get_height()) // 2 + 2))
+                    if highlight_cell == (r, c):
+                        pygame.draw.rect(screen, T["hl"], (x + 4, y + 4, CELL_SIZE - 8, CELL_SIZE - 8), 3,
+                                         border_radius=8)
+                    continue
+                if current_step < 0:
+                    continue
+                key = f"{_COL[c]}{r+1}"
+                cur = set(step_cands.get(key, []))
+                removed = set(prev_cands.get(key, [])) - cur
+                for n in sorted(cur | removed):
+                    cx = x + 8 + ((n - 1) % 3 + 0.5) * sub
+                    cy = y + 13 + ((n - 1) // 3 + 0.5) * sub
+                    if n in removed:
+                        pygame.draw.rect(screen, T["removed_bg"], (cx - sub / 2 + 1, cy - sub / 2 + 1, sub - 2, sub - 2),
+                                         border_radius=3)
+                    ptxt = font_pencil.render(str(n), True, T["pencil_bad"] if n in removed else T["pencil"])
+                    screen.blit(ptxt, (cx - ptxt.get_width() / 2, cy - ptxt.get_height() / 2))
 
-            # Step summary
-            if stype == "info":
-                place_txt = font_explain_bold.render(s.get("text", ""), True, (50, 80, 160))
-            elif stype == "elimination":
-                place_txt = font_explain_bold.render(s.get("text", ""), True, (150, 80, 20))
-            else:
-                rc = s.get("cell", (0, 0))
-                place_txt = font_explain_bold.render(
-                    f"{_COL[rc[1]]}{rc[0]+1} = {s['value']}    Strategy: {s.get('strategy', '')}", True, TEXT_COLOR
-                )
-            screen.blit(place_txt, (GRID_OFFSET_X + 10, panel_y + 30))
-
-            # Explanation text (wrapped, scrollable)
-            explanation = s.get("explanation", "")
-            if explanation:
-                wrapped = []
-                for line in explanation.split("\n"):
-                    wrapped.extend(textwrap.wrap(line, width=100) or [""])
-                # Clamp scroll
-                max_visible = (EXPLANATION_HEIGHT - 75) // 17
-                max_scroll = max(0, len(wrapped) - max_visible)
-                explain_scroll = min(explain_scroll, max_scroll)
-                # Clip to panel area
-                clip_rect = pygame.Rect(GRID_OFFSET_X, panel_y + 50, panel_rect.width, EXPLANATION_HEIGHT - 70)
-                screen.set_clip(clip_rect)
-                ey = panel_y + 52
-                for wl in wrapped[explain_scroll:explain_scroll + max_visible + 1]:
-                    etxt = font_explain.render(wl, True, (60, 60, 80))
-                    screen.blit(etxt, (GRID_OFFSET_X + 10, ey))
-                    ey += 17
-                screen.set_clip(None)
-                # Scroll indicator
-                if len(wrapped) > max_visible:
-                    indicator = font_controls.render(
-                        f"[scroll: {explain_scroll+1}-{min(explain_scroll+max_visible, len(wrapped))}/{len(wrapped)}  UP/DOWN or mousewheel]",
-                        True, TEXT_FADED,
-                    )
-                    screen.blit(indicator, (GRID_OFFSET_X + panel_rect.width - 330, panel_y + 6))
+        # --- Top bar: step counter and auto-play ---
+        if current_step >= 0:
+            stype = steps[current_step].get("type", "placement")
+            label = {"info": "Info", "elimination": "Elimination", "placement": "Placement"}.get(stype, "Step")
+            colour = {"info": T["info"], "elimination": T["elim"], "placement": T["place"]}.get(stype, T["text"])
+            top = font_top.render(f"Step {current_step + 1} / {len(steps)}   {label}", True, colour)
         else:
-            intro = font_step_counter.render("Press SPACE to start solving", True, TEXT_FADED)
-            screen.blit(intro, (GRID_OFFSET_X + 10, panel_y + 10))
+            top = font_top.render(f"{len(steps)} steps   Press SPACE to start", True, T["muted"])
+        screen.blit(top, (GRID_OFFSET_X, (GRID_OFFSET_Y - top.get_height()) // 2))
+        auto = font_controls.render(f"Auto {'ON' if auto_play else 'off'}  {auto_delay} ms", True,
+                                    T["place"] if auto_play else T["muted"])
+        screen.blit(auto, (WINDOW_W - 20 - auto.get_width(), (GRID_OFFSET_Y - auto.get_height()) // 2))
 
-        # Controls hint
-        auto_str = f"Auto: {'ON' if auto_play else 'OFF'} ({auto_delay}ms)"
+        # --- Explanation panel (right) ---
+        panel = pygame.Rect(PANEL_X, GRID_OFFSET_Y, PANEL_W, GRID_SIZE)
+        pygame.draw.rect(screen, T["tip"], panel, border_radius=10)
+        pygame.draw.rect(screen, T["tip_edge"], panel, 1, border_radius=10)
+        if current_step >= 0:
+            s = steps[current_step]
+            if s.get("type") == "placement":
+                rc = s.get("cell", (0, 0))
+                head = f"{_COL[rc[1]]}{rc[0]+1} = {s['value']}"
+                sub_head = s.get("strategy") or s.get("text", "")
+            else:
+                head, sub_head = s.get("text", ""), ""
+            lines = wrap_text([head], font_head, PANEL_W - 28)
+            for j, line in enumerate(lines):
+                screen.blit(font_head.render(line, True, T["text"]), (panel.x + 14, panel.y + 12 + j * 22))
+            ey = panel.y + 18 + len(lines) * 22
+            if sub_head:
+                t = font_explain.render(sub_head, True, T["muted"])
+                screen.blit(t, (panel.x + 14, ey - 4))
+                ey += 20
+            wrapped = wrap_text((s.get("explanation") or "").split("\n"), font_explain, PANEL_W - 28)
+            max_visible = (panel.bottom - ey - 30) // 18
+            explain_scroll = min(explain_scroll, max(0, len(wrapped) - max_visible))
+            for line in wrapped[explain_scroll:explain_scroll + max_visible]:
+                screen.blit(font_explain.render(line, True, T["text"]), (panel.x + 14, ey))
+                ey += 18
+            if len(wrapped) > max_visible:
+                more = font_controls.render(
+                    f"lines {explain_scroll + 1}-{min(explain_scroll + max_visible, len(wrapped))} of {len(wrapped)}"
+                    "   UP/DOWN or wheel to scroll", True, T["muted"])
+                screen.blit(more, (panel.x + 14, panel.bottom - 22))
+        else:
+            for j, line in enumerate(["Step through the solver's reasoning:",
+                                      "each placement, and each elimination",
+                                      "that made one possible.",
+                                      "",
+                                      "Removed candidates show struck on red."]):
+                screen.blit(font_explain.render(line, True, T["muted"]), (panel.x + 14, panel.y + 14 + j * 20))
+
         controls = font_controls.render(
-            f"SPACE/-> next  <- back  UP/DN scroll  A auto  +/- speed  R reset  Q quit  |  {auto_str}",
-            True, TEXT_FADED,
-        )
-        screen.blit(controls, (GRID_OFFSET_X, WINDOW_H - 18))
+            "SPACE / -> next   <- back   UP/DOWN scroll   A auto   +/- speed   R reset   Q quit", True, T["muted"])
+        screen.blit(controls, (GRID_OFFSET_X, WINDOW_H - 26))
 
         # --- Cage tooltip on hover ---
         mx, my = pygame.mouse.get_pos()
         grid_r = (my - GRID_OFFSET_Y) // CELL_SIZE
         grid_c = (mx - GRID_OFFSET_X) // CELL_SIZE
-        if 0 <= grid_r < 9 and 0 <= grid_c < 9 and GRID_OFFSET_X <= mx < GRID_OFFSET_X + GRID_SIZE and GRID_OFFSET_Y <= my < GRID_OFFSET_Y + GRID_SIZE:
+        if 0 <= grid_r < 9 and 0 <= grid_c < 9 and GRID_OFFSET_X <= mx < GRID_OFFSET_X + GRID_SIZE \
+                and GRID_OFFSET_Y <= my < GRID_OFFSET_Y + GRID_SIZE:
             cage_idx = cell_cage_map.get((grid_r, grid_c))
             if cage_idx is not None:
                 cage_sum, cage_cells, _ = cages[cage_idx]
-                # Use current pencil marks to filter combos
-                tip_cands = None
-                if current_step >= 0:
-                    s = steps[current_step]
-                    tip_cands = s.get("candidates") or live_candidates
+                tip_cands = (steps[current_step].get("candidates") or live_candidates) if current_step >= 0 else None
                 combos = _cage_combos(board, cage_sum, cage_cells, candidates=tip_cands)
                 filled = [(r, c) for r, c in cage_cells if board[r][c] != 0]
                 empty = [(r, c) for r, c in cage_cells if board[r][c] == 0]
-                filled_str = ", ".join(f"{board[r][c]}" for r, c in filled) if filled else "none"
-
-                # Build tooltip lines
-                tip_lines = [
-                    f"Cage: sum = {cage_sum}, {len(cage_cells)} cells",
-                    f"Cells: {', '.join(f'R{r+1}C{c+1}' for r, c in cage_cells)}",
-                ]
+                tip_lines = [f"Cage: sum = {cage_sum}, {len(cage_cells)} cells"]
                 if filled:
-                    filled_str = " + ".join(f"{board[r][c]}" for r, c in filled)
-                    tip_lines.append(f"Filled: {filled_str} = {sum(board[r][c] for r, c in filled)}")
+                    tip_lines.append(f"Filled: {' + '.join(str(board[r][c]) for r, c in filled)}"
+                                     f" = {sum(board[r][c] for r, c in filled)}")
                 if empty:
                     remaining = cage_sum - sum(board[r][c] for r, c in filled)
-                    tip_lines.append(f"Need: {remaining} in {len(empty)} cell{'s' if len(empty)>1 else ''}")
+                    tip_lines.append(f"Need: {remaining} in {len(empty)} cell{'s' if len(empty) > 1 else ''}")
                     if combos:
-                        # Show combos compactly, multiple per line
-                        combo_strs = ["{" + ",".join(str(x) for x in c) + "}" for c in combos]
                         line = "Combos: "
-                        combo_lines = []
-                        for cs in combo_strs:
-                            if len(line) + len(cs) > 50:
-                                combo_lines.append(line)
+                        for cs in ["{" + ",".join(str(x) for x in c) + "}" for c in combos]:
+                            if len(line) + len(cs) > 45:
+                                tip_lines.append(line)
                                 line = "        " + cs + " "
                             else:
                                 line += cs + " "
-                        combo_lines.append(line)
-                        tip_lines.extend(combo_lines)
+                        tip_lines.append(line)
                         tip_lines.append(f"({len(combos)} possible)")
                     else:
                         tip_lines.append("No valid combos!")
                 else:
                     tip_lines.append("(complete)")
-
-                # Render tooltip — position so it never goes off-screen
-                tip_w = max(font_tooltip.size(l)[0] for l in tip_lines) + 16
-                tip_h = len(tip_lines) * 20 + 8
-                # Try right/below mouse, then flip if needed
-                tip_x = mx + 15
-                tip_y = my + 15
-                if tip_x + tip_w > WINDOW_W - 5:
-                    tip_x = mx - tip_w - 10
-                if tip_y + tip_h > WINDOW_H - 5:
-                    tip_y = my - tip_h - 10
-                tip_x = max(5, tip_x)
-                tip_y = max(5, tip_y)
-                tip_rect = pygame.Rect(tip_x, tip_y, tip_w, tip_h)
-                pygame.draw.rect(screen, (255, 255, 240), tip_rect, border_radius=4)
-                pygame.draw.rect(screen, (150, 150, 130), tip_rect, 1, border_radius=4)
-                for j, line in enumerate(tip_lines):
-                    f = font_tooltip_bold if j == 0 else font_tooltip
-                    txt = f.render(line, True, (40, 40, 40))
-                    screen.blit(txt, (tip_x + 8, tip_y + 4 + j * 20))
+                draw_tooltip(screen, tip_lines, {0}, (mx, my), (font_tooltip, font_tooltip_bold), (WINDOW_W, WINDOW_H))
 
         pygame.display.flip()
         clock.tick(60)
 
     pygame.quit()
-
-
-if __name__ == "__main__":
-    main()

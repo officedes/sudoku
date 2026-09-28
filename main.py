@@ -42,8 +42,10 @@ PUZZLES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "puzzles"
 def save_puzzle(cages, solution, filename=None):
     os.makedirs(PUZZLES_DIR, exist_ok=True)
     if filename is None:
-        existing = [f for f in os.listdir(PUZZLES_DIR) if f.startswith("puzzle_") and f.endswith(".json")]
-        filename = f"puzzle_{len(existing) + 1:03d}.json"
+        # Next number after the highest, so gaps from deleted puzzles never overwrite one
+        numbers = [int(f[7:-5]) for f in os.listdir(PUZZLES_DIR)
+                   if f.startswith("puzzle_") and f.endswith(".json") and f[7:-5].isdigit()]
+        filename = f"puzzle_{max(numbers, default=0) + 1:03d}.json"
     path = os.path.join(PUZZLES_DIR, filename)
     with open(path, "w") as f:
         f.write('{\n"cages": [\n')

@@ -27,6 +27,6 @@ from killer.solver import (
 )
 from killer.generator import (
     populate_board, generate_cages, generate_sparse_cages,
-    solve_backtrack, count_solutions, generate_to_level,
+    generate_to_level,
     COLOR_PALETTE, is_valid,
 )

@@ -3,7 +3,7 @@
 This module handles:
 1. Creating a random valid Sudoku solution (populate_board)
 2. Partitioning the board into adjacent cages (generate_cages)
-3. Backtracking solver for verification during generation
+3. Growing puzzles to a target technique level (generate_to_level)
 
 Cage generation strategy:
 - Randomly grow connected groups of cells (2-5 cells each)
@@ -14,7 +14,6 @@ Cage generation strategy:
 """
 
 from random import choice, choices, randint
-from killer.sudoku import get_possible_values, check_cages
 
 # ANSI background color codes for terminal display of cages
 COLOR_PALETTE = [41, 42, 43, 44, 45, 46, 101, 102, 103, 104, 105, 106]
@@ -182,107 +181,6 @@ def generate_cages(board):
 # =============================================================================
 # Backtracking solver (used only during generation to verify solvability)
 # =============================================================================
-
-def is_partial_cage_valid(board, cage):
-    """Check if a partially filled cage is still potentially valid.
-
-    Validates:
-    - No duplicate digits in the cage
-    - Current sum doesn't exceed the target
-    - Remaining cells can still reach the target sum with available digits
-    """
-    cage_sum, cells, _ = cage
-    filled = [board[r][c] for r, c in cells if board[r][c] != 0]
-
-    if len(filled) != len(set(filled)):
-        return False  # Duplicate digit
-
-    current = sum(filled)
-    if current > cage_sum:
-        return False  # Already exceeded
-
-    empty_count = sum(1 for r, c in cells if board[r][c] == 0)
-    if empty_count == 0:
-        return current == cage_sum  # Must match exactly
-
-    # Check if target sum is reachable with remaining unused digits
-    unused = [n for n in range(1, 10) if n not in filled]
-    if len(unused) < empty_count:
-        return False
-    min_sum = current + sum(sorted(unused)[:empty_count])
-    max_sum = current + sum(sorted(unused, reverse=True)[:empty_count])
-    return min_sum <= cage_sum <= max_sum
-
-
-def solve_backtrack(board, cages):
-    """Solve using backtracking with MRV (Minimum Remaining Values) heuristic.
-
-    Picks the empty cell with the fewest candidates first (MRV),
-    which dramatically prunes the search tree.
-    """
-    min_poss, next_pos = 10, None
-    for p in range(81):
-        r, c = divmod(p, 9)
-        if board[r][c] == 0:
-            poss = get_possible_values(board, r, c)
-            if len(poss) < min_poss:
-                min_poss, next_pos = len(poss), p
-            if min_poss == 0:
-                return False
-
-    if next_pos is None:
-        return check_cages(board, cages)
-
-    row, col = divmod(next_pos, 9)
-    for num in sorted(get_possible_values(board, row, col)):
-        board[row][col] = num
-        if all(is_partial_cage_valid(board, cage) for cage in cages):
-            if solve_backtrack(board, cages):
-                return True
-        board[row][col] = 0
-    return False
-
-
-def _get_candidates(board, cages, r, c):
-    """Get candidates for a cell using Sudoku + cage constraints (fast version for backtracking)."""
-    poss = get_possible_values(board, r, c)
-    # Also filter by cage if cell is in a cage
-    from killer.sudoku import get_cage_candidates
-    cage_cands = get_cage_candidates(board, r, c, cages)
-    return poss & cage_cands
-
-
-def count_solutions(board, cages, limit=2):
-    """Count solutions up to `limit` (default 2 = enough to check uniqueness).
-
-    Uses cage-aware candidate filtering for faster pruning.
-    Returns the number of solutions found (stops early once limit is reached).
-    """
-    min_poss, next_pos, best_cands = 10, None, None
-    for p in range(81):
-        r, c = divmod(p, 9)
-        if board[r][c] == 0:
-            poss = _get_candidates(board, cages, r, c)
-            if len(poss) < min_poss:
-                min_poss, next_pos, best_cands = len(poss), p, poss
-            if min_poss == 0:
-                return 0
-
-    if next_pos is None:
-        return 1 if check_cages(board, cages) else 0
-
-    row, col = divmod(next_pos, 9)
-    total = 0
-    for num in sorted(best_cands):
-        board[row][col] = num
-        if all(is_partial_cage_valid(board, cage) for cage in cages):
-            total += count_solutions(board, cages, limit - total)
-            if total >= limit:
-                board[row][col] = 0
-                return total
-        board[row][col] = 0
-    return total
-
 
 def generate_sparse_cages(board, uncaged_target=8, base_cages=None):
     """Remove cells from cages while keeping the puzzle strategy-solvable.

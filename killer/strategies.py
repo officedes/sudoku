@@ -491,32 +491,33 @@ def eliminate_naked_subsets(candidates, log=None, single_step=False):
     """
     changed = False
     size_names = {2: "Naked Pair", 3: "Naked Triple", 4: "Naked Quad"}
-    for house_type in ["row", "col", "box"]:
-        for i in range(9):
-            hcells = get_house_cells(house_type, i)
-            empty = [(r, c) for r, c in hcells if candidates[r][c]]
-            for size in range(2, min(5, len(empty))):
-                # Every cell of a naked k-subset has at most k candidates.
-                small = [(r, c) for r, c in empty if len(candidates[r][c]) <= size]
-                for subset in combinations(small, size):
-                    union = set().union(*(candidates[r][c] for r, c in subset))
-                    if len(union) != size:
-                        continue
-                    affected = []
-                    for r, c in empty:
-                        if (r, c) not in subset and candidates[r][c] & union:
-                            removed = candidates[r][c] & union
-                            candidates[r][c] -= union
-                            affected.append((cell(r, c), sorted(removed)))
-                    if affected:
-                        changed = True
-                    if affected and log is not None:
-                        name = size_names.get(size, f"Naked {size}-set")
-                        hn = house_name(house_type, i)
-                        removals = ", ".join(f"{sorted(d)} from {c}" for c, d in affected)
-                        log.append(f"{name} in {hn}: [{cells(subset)}] = {sorted(union)} -> removed {removals}")
-                        if single_step:
-                            return True
+    for hn, hcells in _house_list():
+        empty = [(r, c) for r, c in hcells if candidates[r][c]]
+        masks = {(r, c): to_mask(candidates[r][c]) for r, c in empty}
+        for size in range(2, min(5, len(empty))):
+            # Every cell of a naked k-subset has at most k candidates.
+            small = [x for x in empty if masks[x].bit_count() <= size]
+            for subset in combinations(small, size):
+                union = 0
+                for x in subset:
+                    union |= masks[x]
+                if union.bit_count() != size:
+                    continue
+                affected = []
+                for r, c in empty:
+                    if masks[(r, c)] & union and (r, c) not in subset:
+                        removed = mask_to_set(masks[(r, c)] & union)
+                        candidates[r][c] -= removed
+                        masks[(r, c)] &= ~union
+                        affected.append((cell(r, c), sorted(removed)))
+                if affected:
+                    changed = True
+                if affected and log is not None:
+                    name = size_names.get(size, f"Naked {size}-set")
+                    removals = ", ".join(f"{sorted(d)} from {c}" for c, d in affected)
+                    log.append(f"{name} in {hn}: [{cells(subset)}] = {sorted(mask_to_set(union))} -> removed {removals}")
+                    if single_step:
+                        return True
     return changed
 
 
@@ -1629,8 +1630,11 @@ def _restrict_cage(board, cage, candidates, keep):
     return removed
 
 
+_NAMED_HOUSES = [(house_name(t, i), get_house_cells(t, i)) for t in ("row", "col", "box") for i in range(9)]
+
+
 def _house_list():
-    return [(house_name(t, i), get_house_cells(t, i)) for t in ("row", "col", "box") for i in range(9)]
+    return _NAMED_HOUSES
 
 
 def _log_removals(log, text, affected):
@@ -1660,18 +1664,29 @@ def eliminate_hidden_killer_subsets(candidates, board, cages, log=None, single_s
         groups = {}
         for x in empty:
             groups.setdefault(cage_of.get(x, x), []).append(x)
+        glist = list(groups)
+        cage_groups = sum(1 << gi for gi, g in enumerate(glist) if isinstance(g, int))
         states = {}
-        gmask = None
+        holders = None
         digits = [d for d in range(1, 10) if d not in placed]
         for k in (1, 2, 3):
             for subset in combinations(digits, k):
-                sset, smask = set(subset), to_mask(subset)
-                if gmask is None:  # digits each group can still take; refreshed after a change
-                    gmask = {g: to_mask(set().union(*(candidates[r][c] for r, c in gcells)))
-                             for g, gcells in groups.items()}
-                ents = [g for g, m in gmask.items() if m & smask]
-                if len(ents) != k or all(not isinstance(g, int) for g in ents):
+                if holders is None:  # digit -> groups (bitmask) that can still take it; refreshed after a change
+                    holders = [0] * 10
+                    for gi, g in enumerate(glist):
+                        m = 0
+                        for r, c in groups[g]:
+                            m |= to_mask(candidates[r][c])
+                        for d in range(1, 10):
+                            if m >> d & 1:
+                                holders[d] |= 1 << gi
+                ent_bits = 0
+                for d in subset:
+                    ent_bits |= holders[d]
+                if ent_bits.bit_count() != k or not ent_bits & cage_groups:
                     continue  # plain hidden singles/subsets are handled elsewhere
+                sset, smask = set(subset), to_mask(subset)
+                ents = [glist[gi] for gi in range(len(glist)) if ent_bits >> gi & 1]
                 ok = True
                 for g in ents:
                     if isinstance(g, int):
@@ -1700,7 +1715,7 @@ def eliminate_hidden_killer_subsets(candidates, board, cages, log=None, single_s
                 if affected:
                     changed = True
                     states.clear()
-                    gmask = None
+                    holders = None
                     if log is not None:
                         where = ", ".join(f"cage sum={cages[g][0]}" if isinstance(g, int) else cell(*g)
                                           for g in ents)
@@ -1723,31 +1738,33 @@ def eliminate_naked_killer_subsets(candidates, board, cages, log=None, single_st
     with cell F3 = {1,2}, 1 and 2 are locked there and leave the column.
     """
     changed = False
-    cage_sets = [{tuple(x) for x in cls} for _, cls, _ in cages]
+    cage_bits = [_bits(tuple(x) for x in cls) for _, cls, _ in cages]
     states = None
-    for hname, hcells in _house_list():
+    for (hname, hcells), hbits in zip(_house_list(), _HOUSE_BITS):
         if states is None:  # (re)computed only after a change
             states = [_cage_state(board, cage, candidates) for cage in cages]
-        hset = set(hcells)
-        placed = {board[r][c] for r, c in hcells if board[r][c]}
-        empty = [(r, c) for r, c in hcells if board[r][c] == 0]
-        inside = [(ci, set(states[ci][0]), states[ci][1]) for ci in range(len(cages))
-                  if states[ci] and cage_sets[ci] <= hset]
-        cmask = {x: to_mask(candidates[x[0]][x[1]]) for x in empty}
+        inside = [(ci, set(states[ci][0]), tuple(states[ci][1])) for ci in range(len(cages))
+                  if states[ci] and not cage_bits[ci] & ~hbits]
         if not inside:
             continue
+        placed = {board[r][c] for r, c in hcells if board[r][c]}
+        empty = [(r, c) for r, c in hcells if board[r][c] == 0]
+        cmask = {x: to_mask(candidates[x[0]][x[1]]) for x in empty}
         digits = [d for d in range(1, 10) if d not in placed]
         for k in range(2, min(5, len(digits))):
             for subset in combinations(digits, k):
-                sset, smask = set(subset), to_mask(subset)
+                smask = 0
+                for d in subset:
+                    smask |= 1 << d
                 cage_ents = [(ci, ccells, finals) for ci, ccells, finals in inside
-                             if all(f & smask for f in finals)]
+                             if all(map(smask.__and__, finals))]
                 if not cage_ents:
                     continue
                 in_cages = set().union(*(cc for _, cc, _ in cage_ents))
-                cell_ents = [x for x in empty if x not in in_cages and not cmask[x] & ~smask]
+                cell_ents = [x for x in empty if not cmask[x] & ~smask and x not in in_cages]
                 if len(cage_ents) + len(cell_ents) != k:
                     continue
+                sset = set(subset)
                 affected = []
                 for ci, _, finals in cage_ents:
                     keep = {f for f in finals if (f & smask).bit_count() == 1}
@@ -2044,6 +2061,35 @@ def _bits(cells_):
     return sum(1 << (r * 9 + c) for r, c in cells_)
 
 
+# Cell index -> the three houses (indices into _HOUSE_BITS) holding it
+_CELL_HOUSES = [[h for h, hb in enumerate(_HOUSE_BITS) if hb >> i & 1] for i in range(81)]
+
+
+def _covers(spots, n):
+    """Every set of n houses covering all of `spots` (a cell bitmask).
+
+    The lowest uncovered cell lies in just three houses and one of them must
+    be a cover, so branching on those reaches every cover set in at most 3^n
+    paths instead of trying all combinations of the houses touched.
+    """
+    found = set()
+
+    def grow(left, chosen):
+        if not left:
+            if len(chosen) == n:
+                found.add(tuple(sorted(chosen)))
+            return
+        if len(chosen) == n:
+            return
+        low = (left & -left).bit_length() - 1
+        for h in _CELL_HOUSES[low]:
+            if h not in chosen:
+                grow(left & ~_HOUSE_BITS[h], chosen + [h])
+
+    grow(spots, [])
+    return sorted(found)  # same order as trying combinations of houses
+
+
 def _cells_of(bits):
     out = []
     while bits:
@@ -2067,13 +2113,13 @@ def eliminate_killer_fish(candidates, board, cages, log=None, single_step=False)
     no other cell of those columns is 9.
     """
     changed = False
-    houses = list(zip(_house_list(), _HOUSE_BITS))
+    houses = _house_list()
     states = [_cage_state(board, cage, candidates) for cage in cages]
     for d in range(1, 10):
         cand_bits = sum(1 << (r * 9 + c) for r in range(9) for c in range(9)
                         if board[r][c] == 0 and d in candidates[r][c])
         units = []
-        for (hname, hcells), hb in houses:
+        for (hname, hcells), hb in zip(houses, _HOUSE_BITS):
             if any(board[r][c] == d for r, c in hcells):
                 continue
             spots = hb & cand_bits
@@ -2095,13 +2141,10 @@ def eliminate_killer_fish(candidates, board, cages, log=None, single_step=False)
                     spots |= s
                 if not ok:
                     continue
-                touching = [(hn, hb) for (hn, _), hb in houses if hb & spots]
-                for covers in combinations(touching, n):
+                for covers in _covers(spots, n):
                     cover_bits = 0
-                    for _, hb in covers:
-                        cover_bits |= hb
-                    if spots & ~cover_bits:
-                        continue
+                    for h in covers:
+                        cover_bits |= _HOUSE_BITS[h]
                     targets = cover_bits & cand_bits & ~spots
                     if not targets:
                         continue
@@ -2113,7 +2156,7 @@ def eliminate_killer_fish(candidates, board, cages, log=None, single_step=False)
                     changed = True
                     if log is not None:
                         _log_removals(log, f"Killer fish on {d}: {', '.join(b for b, _ in bases)} lie within"
-                                           f" {', '.join(c for c, _ in covers)}", affected)
+                                           f" {', '.join(houses[h][0] for h in sorted(covers))}", affected)
                         if single_step:
                             return True
     return changed

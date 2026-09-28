@@ -36,6 +36,11 @@ from killer import (
 )
 from killer.generator import generate_sparse_cages, level_attempt, COLOR_PALETTE
 
+# Grids tried in parallel. Measured on a 15 W laptop chip (2 performance +
+# 8 efficiency cores): 3 workers made puzzles ~3x faster than 6 or 10, which
+# land on slow cores and pull the clock down.
+DEFAULT_WORKERS = min(3, os.cpu_count() or 1)
+
 PUZZLES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "puzzles")
 
 
@@ -326,8 +331,8 @@ def main():
     gen.add_argument("--tries", type=int, default=200, help="Cage layouts per board (default: 200)")
     gen.add_argument("--level", type=int, default=3, choices=range(1, 5),
                      help="Technique level the puzzle needs (default: 3, like the app's hard tier)")
-    gen.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2),
-                     help="Grids tried in parallel (default: CPU count - 2)")
+    gen.add_argument("--workers", type=int, default=DEFAULT_WORKERS,
+                     help=f"Grids tried in parallel (default: {DEFAULT_WORKERS})")
     gen.add_argument("--contradictions", type=int, default=0,
                      help="Harder level 4: gets stuck N+ times, each needing a first-order contradiction sweep")
     gen.add_argument("--uncaged", type=int, default=0, help="Leave N cells in no cage")
@@ -350,7 +355,7 @@ def main():
     parser.add_argument("--boards", type=int, default=10)
     parser.add_argument("--tries", type=int, default=200)
     parser.add_argument("--level", type=int, default=3, choices=range(1, 5))
-    parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
+    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     parser.add_argument("--contradictions", type=int, default=0)
     parser.add_argument("--uncaged", type=int, default=0)
     parser.add_argument("--big-cages", type=int, default=0)

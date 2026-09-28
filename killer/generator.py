@@ -318,6 +318,21 @@ def _connected(cells):
     return seen == cells
 
 
+def _merge_options(board, groups, long_size, long_max, long_quota, rejected):
+    """Merges still allowed: within the size caps (only long snakes may pass 5
+    cells once the quota is met) and not already known to break the puzzle."""
+    longs = sum(len(g) >= long_size[0] for g in groups)
+    options = []
+    for a, b in _mergeable(board, groups, long_max):
+        size = len(groups[a]) + len(groups[b])
+        grows_long = max(len(groups[a]), len(groups[b])) >= long_size[0]
+        if size > 5 and not grows_long and longs >= long_quota:
+            continue
+        if (frozenset(groups[a]), frozenset(groups[b])) not in rejected:
+            options.append((a, b))
+    return options
+
+
 def _uncage_options(groups, rejected):
     """(group index, cell) pairs that could leave their cage: one-cell cages
     first, else edge cells of 3+ cell cages that stay connected without them."""
@@ -415,9 +430,10 @@ def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
     long_quota = randint(*long_cages)
     long_max = 9 if big_cages else randint(*long_size)
     free = []  # cells left out of every cage
-    # Uncaged cells and big cages each use up cells that would otherwise
-    # form cages, so allow that many fewer
-    min_cages = cages[0] - uncaged - big_cages
+    # Big cages use up cells that would otherwise form cages, and each
+    # one-cell cage dropped to leave its cell uncaged removes a cage, so the
+    # floor on the cage count drops by those
+    min_cages = cages[0] - big_cages
     # Merging and uncaging only remove information, so a move that broke the
     # puzzle once would break it again later: never retry it.
     rejected, rejected_free = set(), set()
@@ -425,27 +441,34 @@ def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
         if len(groups) < min_cages:
             return None
         stats = {}
-        spots = _uncage_options(groups, rejected_free)             if len(free) < uncaged and len(groups) <= cages[1] + 2 else []
+        wanted = len(free) < uncaged and len(groups) <= cages[1] + 2
+        spots = _uncage_options(groups, rejected_free) if wanted else []
+        options = [] if wanted else _merge_options(board, groups, long_size, long_max, long_quota, rejected)
+        if not wanted and not options:
+            # Merging is stuck, usually on one-cell cages boxed in by cages
+            # that already hold their digit: leave those cells uncaged instead
+            spots = [(gi, x) for gi, x in _uncage_options(groups, rejected_free) if len(groups[gi]) == 1]
+            if not spots:
+                # The one-cell cages left are givens the puzzle needs; up to 3
+                # is still app-like (one of the reference puzzles has 3)
+                if sum(len(g) == 1 for g in groups) <= 3 and len(free) >= uncaged \
+                        and min_cages <= len(groups) <= cages[1] \
+                        and sum(len(g) >= long_size[0] for g in groups) >= long_cages[0] \
+                        and (min_level == 1 or not solvable(groups, min_level - 1)):
+                    return _to_cages(board, groups), [row[:] for row in board]
+                return None
         if spots:
             gi, x = choice(spots)
             trial = [g for g in ([y for y in g if y != x] if i == gi else g for i, g in enumerate(groups)) if g]
             if not solvable(trial, max_level, stats):
                 rejected_free.add(x)
                 continue
+            if len(groups[gi]) == 1:
+                min_cages -= 1
             groups = trial
             free.append(x)
         else:
             longs = sum(len(g) >= long_size[0] for g in groups)
-            options = []
-            for a, b in _mergeable(board, groups, long_max):
-                size = len(groups[a]) + len(groups[b])
-                grows_long = max(len(groups[a]), len(groups[b])) >= long_size[0]
-                if size > 5 and not grows_long and longs >= long_quota:
-                    continue
-                if (frozenset(groups[a]), frozenset(groups[b])) not in rejected:
-                    options.append((a, b))
-            if not options:
-                return None
             # Favour growing the long snakes until the quota is met, then small merges.
             weights = []
             for a, b in options:

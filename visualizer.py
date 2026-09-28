@@ -95,7 +95,7 @@ THEME = {
     "chip": (52, 60, 76), "chip_edge": (110, 132, 176), "chip_off": (60, 62, 70),
     "btn": (52, 56, 66), "btn_hover": (66, 72, 86), "btn_active": (70, 110, 90),
     "key": (40, 48, 64), "key_edge": (64, 78, 104), "key_hover": (54, 66, 88),
-    "tip": (30, 32, 38), "tip_edge": (96, 102, 120),
+    "tip": (30, 32, 38), "tip_edge": (96, 102, 120), "panel": (52, 64, 88),
     "removed_bg": (120, 48, 52), "info": (120, 160, 235), "elim": (240, 168, 60), "place": (110, 215, 140),
 }
 
@@ -306,6 +306,9 @@ def play_mode(cages, solution):
     user_cages = []  # list of {"id", "cells": sorted list, "sum": int or None, "color", "distinct": bool}
     next_mark_id = 0
     selected_mark = None  # index into user_cages, or None
+    marks_open = False  # the list of the player's marks, opened from the combination bar
+    marks_toggle_rect = marks_panel_rect = None  # drawn each frame, clicked on the next
+    mark_trash_rects = []  # (pygame.Rect, mark index)
     marking_sum = None  # when not None, we're typing a sum for a new mark
     marking_input = ""  # string being typed for sum
     highlight_digit = None  # 1-9 to highlight all cells containing this digit
@@ -345,6 +348,57 @@ def play_mode(cages, solution):
 
     def areas_at(cell):
         return [a for a in summed_areas() if cell in a[2]]
+
+    def delete_mark(mi):
+        nonlocal selected_mark, selected
+        gone = mark_key(user_cages.pop(mi))
+        cage_excluded.pop(gone, None)
+        cage_excluded_combos.pop(gone, None)
+        selected_mark = None
+        selected = set()
+
+    def draw_chips(key, cs, ccls, x0, y0, x_max, rows):
+        """An area's combinations as chips from (x0, y0), wrapping over `rows`
+        rows; ruled-out ones are greyed and struck through, and every chip not
+        hidden by a digit rule-out can be clicked to toggle it."""
+        pencil_cands = None
+        if any(pencil[r][c] for r, c in ccls if board[r][c] == 0):
+            pencil_cands = {f"{_COL[c]}{r+1}": list(pencil[r][c])
+                            for r, c in ccls if board[r][c] == 0 and pencil[r][c]}
+        excl = cage_excluded.get(key, set())
+        excl_combo_set = cage_excluded_combos.get(key, set())
+        all_combos = _cage_combos(board, cs, ccls)
+        pencil_ok_fs = {frozenset(c) for c in _cage_combos(board, cs, ccls, candidates=pencil_cands)}
+        cx, cy = x0, y0
+        shown = 0
+        for combo in all_combos:
+            label = "".join(str(d) for d in combo)
+            w = font_chip.size(label)[0] + 20
+            if cx + w > x_max:
+                cx, cy = x0, cy + 31
+            if cy > y0 + 31 * (rows - 1):
+                more = font_info.render(f"+{len(all_combos) - shown} more", True, T["muted"])
+                screen.blit(more, (x_max - more.get_width(), y0 + 31 * (rows - 1) + 5))
+                break
+            combo_fs = frozenset(combo)
+            is_digit_excl = bool(excl and set(combo) & excl)
+            is_off = is_digit_excl or combo_fs in excl_combo_set or combo_fs not in pencil_ok_fs
+            chip = pygame.Rect(cx, cy, w, 27)
+            hover = chip.collidepoint(mouse)
+            pygame.draw.rect(screen, T["chip_off"] if is_off else (T["key_hover"] if hover else T["chip"]),
+                             chip, border_radius=7)
+            pygame.draw.rect(screen, T["grid"] if is_off else T["chip_edge"], chip, 1, border_radius=7)
+            t = font_chip.render(label, True, T["muted"] if is_off else T["text"])
+            screen.blit(t, (cx + 10, cy + (27 - t.get_height()) // 2))
+            if is_off:
+                pygame.draw.line(screen, T["pencil_bad"], (cx + 7, cy + 14), (cx + w - 7, cy + 14), 1)
+            if not is_digit_excl:
+                combo_click_rects.append((chip, key, combo_fs))
+            cx += w + 6
+            shown += 1
+        if not all_combos:
+            t = font_info.render("No valid combinations!", True, T["digit_bad"])
+            screen.blit(t, (cx, y0 + 6))
 
     def do_auto_pencil():
         """Fill pencil marks for the selected cages, or the selected mark, from their valid combos.
@@ -509,7 +563,8 @@ def play_mode(cages, solution):
                 mx, my = event.pos
                 gr = (my - GRID_OFFSET_Y) // CELL_SIZE
                 gc = (mx - GRID_OFFSET_X) // CELL_SIZE
-                in_grid = (0 <= gr < 9 and 0 <= gc < 9
+                in_panel = marks_open and marks_panel_rect is not None and marks_panel_rect.collidepoint(mx, my)
+                in_grid = (0 <= gr < 9 and 0 <= gc < 9 and not in_panel
                            and GRID_OFFSET_X <= mx < GRID_OFFSET_X + GRID_SIZE
                            and GRID_OFFSET_Y <= my < GRID_OFFSET_Y + GRID_SIZE)
 
@@ -554,7 +609,18 @@ def play_mode(cages, solution):
                             highlight_digit = board[gr][gc]
 
                 else:
-                    hit_something = False
+                    hit_something = in_panel  # clicks on the open marks list never clear the selection
+                    if marks_toggle_rect is not None and marks_toggle_rect.collidepoint(mx, my):
+                        hit_something = True
+                        marks_open = not marks_open
+                    for rect, mi in mark_trash_rects:
+                        if rect.collidepoint(mx, my) and mi < len(user_cages):
+                            delete_mark(mi)
+                            if not user_cages:
+                                marks_open = False
+                            message = "Mark deleted"
+                            msg_color = (60, 60, 80)
+                            break
                     # Keypad: hand the digit to the key handler, forcing place or pencil;
                     # with nothing selected the key handler toggles the digit highlight,
                     # which also finds digits that only exist as pencil marks
@@ -650,11 +716,9 @@ def play_mode(cages, solution):
                                         msg_color = (0, 80, 160)
                                 elif btn_name == "Del Mark":
                                     if selected_mark is not None and selected_mark < len(user_cages):
-                                        gone = mark_key(user_cages.pop(selected_mark))
-                                        cage_excluded.pop(gone, None)
-                                        cage_excluded_combos.pop(gone, None)
-                                        selected_mark = None
-                                        selected = set()
+                                        delete_mark(selected_mark)
+                                        if not user_cages:
+                                            marks_open = False
                                         message = "Mark deleted"
                                         msg_color = (60, 60, 80)
                                 elif btn_name == "Reset":
@@ -1038,50 +1102,24 @@ def play_mode(cages, solution):
             sel_areas = [(ci, cages[ci][0], cages[ci][1], True)
                          for ci in sorted({cell_cage_map[cl] for cl in selected if cl in cell_cage_map})]
         bar_x, bar_y = GRID_OFFSET_X, COMBO_Y
+        # The marks list opens from a chevron at the start of the bar, like the app
+        marks_toggle_rect = None
+        if user_cages:
+            marks_toggle_rect = pygame.Rect(bar_x, bar_y, 34, 30)
+            hover = marks_toggle_rect.collidepoint(mouse)
+            pygame.draw.rect(screen, T["key_hover"] if hover or marks_open else T["key"], marks_toggle_rect,
+                             border_radius=7)
+            mx0, my0 = marks_toggle_rect.center
+            tip = -5 if marks_open else 5  # points up when open
+            pygame.draw.lines(screen, T["text"], False, [(mx0 - 8, my0 - tip), (mx0, my0 + tip), (mx0 + 8, my0 - tip)], 3)
+            bar_x += 42
         if len(sel_areas) == 1 and sel_areas[0][1] is not None and sel_areas[0][3]:
             ci, cs, ccls, _ = sel_areas[0]
             filled_c = [(r, c) for r, c in ccls if board[r][c] != 0]
             remaining = cs - sum(board[r][c] for r, c in filled_c)
             head = font_combo_head.render(f"{remaining} =" if filled_c else f"{cs} =", True, T["text"])
             screen.blit(head, (bar_x, bar_y + 2))
-            pencil_cands = None
-            if any(pencil[r][c] for r, c in ccls if board[r][c] == 0):
-                pencil_cands = {f"{_COL[c]}{r+1}": list(pencil[r][c])
-                                for r, c in ccls if board[r][c] == 0 and pencil[r][c]}
-            excl = cage_excluded.get(ci, set())
-            excl_combo_set = cage_excluded_combos.get(ci, set())
-            all_combos = _cage_combos(board, cs, ccls)
-            pencil_ok_fs = {frozenset(c) for c in _cage_combos(board, cs, ccls, candidates=pencil_cands)}
-            cx, cy = bar_x + head.get_width() + 10, bar_y
-            shown = 0
-            for combo in all_combos:
-                label = "".join(str(d) for d in combo)
-                w = font_chip.size(label)[0] + 20
-                if cx + w > WINDOW_W - GRID_OFFSET_X:
-                    cx, cy = bar_x + head.get_width() + 10, cy + 31
-                if cy > bar_y + 31:
-                    more = font_info.render(f"+{len(all_combos) - shown} more", True, T["muted"])
-                    screen.blit(more, (WINDOW_W - GRID_OFFSET_X - more.get_width(), bar_y + 36))
-                    break
-                combo_fs = frozenset(combo)
-                is_digit_excl = bool(excl and set(combo) & excl)
-                is_off = is_digit_excl or combo_fs in excl_combo_set or combo_fs not in pencil_ok_fs
-                chip = pygame.Rect(cx, cy, w, 27)
-                hover = chip.collidepoint(mouse)
-                pygame.draw.rect(screen, T["chip_off"] if is_off else (T["key_hover"] if hover else T["chip"]),
-                                 chip, border_radius=7)
-                pygame.draw.rect(screen, T["grid"] if is_off else T["chip_edge"], chip, 1, border_radius=7)
-                t = font_chip.render(label, True, T["muted"] if is_off else T["text"])
-                screen.blit(t, (cx + 10, cy + (27 - t.get_height()) // 2))
-                if is_off:
-                    pygame.draw.line(screen, T["pencil_bad"], (cx + 7, cy + 14), (cx + w - 7, cy + 14), 1)
-                if not is_digit_excl:
-                    combo_click_rects.append((chip, ci, combo_fs))
-                cx += w + 6
-                shown += 1
-            if not all_combos:
-                t = font_info.render("No valid combinations!", True, T["digit_bad"])
-                screen.blit(t, (cx, bar_y + 6))
+            draw_chips(ci, cs, ccls, bar_x + head.get_width() + 10, bar_y, WINDOW_W - GRID_OFFSET_X, 2)
         else:
             if not sel_areas:
                 lines = ["Select a cell to see its cage's combinations",
@@ -1106,6 +1144,37 @@ def play_mode(cages, solution):
             for i, line in enumerate(lines):
                 t = (font_top if i == 0 else font_info).render(line, True, T["text"] if i == 0 else T["muted"])
                 screen.blit(t, (bar_x, bar_y + 6 + i * 22))
+
+        # --- The player's marks, one row each: "sum = [chips]" and a bin to delete ---
+        marks_panel_rect = None
+        mark_trash_rects = []
+        if marks_open and user_cages:
+            row_h = 40
+            marks_panel_rect = pygame.Rect(GRID_OFFSET_X - 4, COMBO_Y + 36, GRID_SIZE + 8, 12 + row_h * len(user_cages))
+            pygame.draw.rect(screen, T["panel"], marks_panel_rect, border_radius=12)
+            pygame.draw.rect(screen, T["key_edge"], marks_panel_rect, 1, border_radius=12)
+            for mi, uc in enumerate(user_cages):
+                ry = marks_panel_rect.y + 6 + mi * row_h
+                x0 = marks_panel_rect.x + 12
+                trash = pygame.Rect(marks_panel_rect.right - 42, ry + 4, 30, 30)
+                mark_trash_rects.append((trash, mi))
+                tc = T["digit_bad"] if trash.collidepoint(mouse) else T["text"]
+                pygame.draw.rect(screen, tc, (trash.x + 8, trash.y + 10, 14, 16), 2, border_radius=3)
+                pygame.draw.line(screen, tc, (trash.x + 5, trash.y + 8), (trash.x + 24, trash.y + 8), 2)
+                pygame.draw.line(screen, tc, (trash.x + 12, trash.y + 5), (trash.x + 17, trash.y + 5), 2)
+                pygame.draw.line(screen, tc, (trash.x + 13, trash.y + 14), (trash.x + 13, trash.y + 22), 1)
+                pygame.draw.line(screen, tc, (trash.x + 17, trash.y + 14), (trash.x + 17, trash.y + 22), 1)
+                if uc["sum"] is None:
+                    t = font_info.render(f"{len(uc['cells'])} cells, no sum", True, T["muted"])
+                    screen.blit(t, (x0, ry + 11))
+                    continue
+                head = font_combo_head.render(f"{uc['sum']} =", True, uc["color"])
+                screen.blit(head, (x0, ry + 3))
+                if not uc["distinct"]:
+                    t = font_info.render("cells don't all see each other: digits can repeat", True, T["muted"])
+                    screen.blit(t, (x0 + head.get_width() + 10, ry + 11))
+                    continue
+                draw_chips(mark_key(uc), uc["sum"], uc["cells"], x0 + head.get_width() + 10, ry + 5, trash.x - 8, 1)
 
         # --- Message line ---
         msg = font_info.render(message, True, soft(msg_color))

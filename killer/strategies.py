@@ -1187,9 +1187,12 @@ def _sum_constraints(cages, max_cells=5, max_large=8):
     the region): it contributes b * sum and its cells keep coef - b, which
     gives innies (b = 0), outies (b = 1) and every mix of the two.
     """
+    if _SUM_CONSTRAINTS.get("cages") is cages:
+        return _SUM_CONSTRAINTS["result"]
     key = _cages_key(cages)
-    if key in _SUM_CONSTRAINTS:
-        return _SUM_CONSTRAINTS[key]
+    if _SUM_CONSTRAINTS.get("key") == key:
+        _SUM_CONSTRAINTS["cages"] = cages
+        return _SUM_CONSTRAINTS["result"]
     # Only the current puzzle is kept, so generating many layouts can't grow this.
     _SUM_CONSTRAINTS.clear()
     _SUPPORT_CACHE.clear()
@@ -1225,7 +1228,7 @@ def _sum_constraints(cages, max_cells=5, max_large=8):
             seen.add(sig)
             entry = (terms, target, f"{name}: {_expr(terms)} = {target}")
             (small if len(terms) <= max_cells else large).append(entry)
-    _SUM_CONSTRAINTS[key] = (small, large)
+    _SUM_CONSTRAINTS.update(key=key, cages=cages, result=(small, large))
     return small, large
 
 
@@ -1312,11 +1315,11 @@ def _bounds_and_parity(terms, target, domains):
     return allowed
 
 
-def _prune_by_sum(terms, target, candidates, board, cage_of, exact=True):
+def _prune_by_sum(terms, target, why, candidates, board, cage_of, exact=True):
     """Remove candidates no assignment meeting the sum can use; returns removals.
 
     `exact` enumerates assignments (small constraints); otherwise it uses
-    bounds and parity.
+    bounds and parity. `why` names the constraint and keys the result cache.
     """
     domains = {}
     for (r, c), _ in terms:
@@ -1324,7 +1327,7 @@ def _prune_by_sum(terms, target, candidates, board, cage_of, exact=True):
     if any(not d for d in domains.values()) or all(board[r][c] for (r, c), _ in terms):
         return []
     if exact:
-        cache_key = (tuple(terms), target, tuple(to_mask(domains[x]) for x, _ in terms))
+        cache_key = (why, tuple(to_mask(domains[x]) for x, _ in terms))
         support = _SUPPORT_CACHE.get(cache_key)
         if support is None:
             support = _SUPPORT_CACHE[cache_key] = _supported_values(terms, target, domains, cage_of)
@@ -1360,7 +1363,7 @@ def eliminate_innies_outies(candidates, board, cages, log=None, single_step=Fals
     changed = False
     cage_of = {tuple(x): k for k, (_, cls, _) in enumerate(cages) for x in cls}
     for terms, target, why in _sum_constraints(cages)[0]:
-        affected = _prune_by_sum(terms, target, candidates, board, cage_of)
+        affected = _prune_by_sum(terms, target, why, candidates, board, cage_of)
         if affected:
             changed = True
             if log is not None:
@@ -1427,7 +1430,8 @@ def eliminate_large_sums(candidates, board, cages, log=None, single_step=False):
         if not cur:
             continue
         reduced = sorted(cur.items())
-        affected = _prune_by_sum(reduced, target, candidates, board, cage_of, exact=len(reduced) <= 5)
+        affected = _prune_by_sum(reduced, target, f"{_expr(reduced)} = {target}", candidates, board, cage_of,
+                                 exact=len(reduced) <= 5)
         if affected:
             changed = True
             if log is not None:
@@ -1587,6 +1591,11 @@ def eliminate_by_contradiction(candidates, board, cages, log=None, single_step=F
 # Advanced killer techniques (pure logic, level 3)
 # =============================================================================
 
+_PEER_SET = {(r, c): {(rr, cc) for rr in range(9) for cc in range(9) if (rr, cc) != (r, c)
+                     and (rr == r or cc == c or (rr // 3 == r // 3 and cc // 3 == c // 3))}
+             for r in range(9) for c in range(9)}
+
+
 def _sees(a, b):
     return a[0] == b[0] or a[1] == b[1] or (a[0] // 3 == b[0] // 3 and a[1] // 3 == b[1] // 3)
 
@@ -1652,11 +1661,15 @@ def eliminate_hidden_killer_subsets(candidates, board, cages, log=None, single_s
         for x in empty:
             groups.setdefault(cage_of.get(x, x), []).append(x)
         states = {}
+        gmask = None
         digits = [d for d in range(1, 10) if d not in placed]
         for k in (1, 2, 3):
             for subset in combinations(digits, k):
                 sset, smask = set(subset), to_mask(subset)
-                ents = [g for g, gcells in groups.items() if any(candidates[r][c] & sset for r, c in gcells)]
+                if gmask is None:  # digits each group can still take; refreshed after a change
+                    gmask = {g: to_mask(set().union(*(candidates[r][c] for r, c in gcells)))
+                             for g, gcells in groups.items()}
+                ents = [g for g, m in gmask.items() if m & smask]
                 if len(ents) != k or all(not isinstance(g, int) for g in ents):
                     continue  # plain hidden singles/subsets are handled elsewhere
                 ok = True
@@ -1672,8 +1685,9 @@ def eliminate_hidden_killer_subsets(candidates, board, cages, log=None, single_s
                 affected = []
                 for g in ents:
                     if isinstance(g, int):
-                        affected += _restrict_cage(board, cages[g], candidates,
-                                                   {f for f in states[g][1] if f & smask})
+                        keep = {f for f in states[g][1] if f & smask}
+                        if len(keep) < len(states[g][1]):
+                            affected += _restrict_cage(board, cages[g], candidates, keep)
                         for r, c in cages[g][1]:
                             if board[r][c] == 0 and (r, c) not in groups[g] and candidates[r][c] & sset:
                                 affected.append((cell(r, c), sorted(candidates[r][c] & sset)))
@@ -1686,6 +1700,7 @@ def eliminate_hidden_killer_subsets(candidates, board, cages, log=None, single_s
                 if affected:
                     changed = True
                     states.clear()
+                    gmask = None
                     if log is not None:
                         where = ", ".join(f"cage sum={cages[g][0]}" if isinstance(g, int) else cell(*g)
                                           for g in ents)
@@ -1708,17 +1723,17 @@ def eliminate_naked_killer_subsets(candidates, board, cages, log=None, single_st
     with cell F3 = {1,2}, 1 and 2 are locked there and leave the column.
     """
     changed = False
+    cage_sets = [{tuple(x) for x in cls} for _, cls, _ in cages]
+    states = None
     for hname, hcells in _house_list():
+        if states is None:  # (re)computed only after a change
+            states = [_cage_state(board, cage, candidates) for cage in cages]
         hset = set(hcells)
         placed = {board[r][c] for r, c in hcells if board[r][c]}
         empty = [(r, c) for r, c in hcells if board[r][c] == 0]
-        inside = []
-        for ci, cage in enumerate(cages):
-            cls = [tuple(x) for x in cage[1]]
-            if set(cls) <= hset:
-                state = _cage_state(board, cage, candidates)
-                if state:
-                    inside.append((ci, set(state[0]), state[1]))
+        inside = [(ci, set(states[ci][0]), states[ci][1]) for ci in range(len(cages))
+                  if states[ci] and cage_sets[ci] <= hset]
+        cmask = {x: to_mask(candidates[x[0]][x[1]]) for x in empty}
         if not inside:
             continue
         digits = [d for d in range(1, 10) if d not in placed]
@@ -1730,19 +1745,22 @@ def eliminate_naked_killer_subsets(candidates, board, cages, log=None, single_st
                 if not cage_ents:
                     continue
                 in_cages = set().union(*(cc for _, cc, _ in cage_ents))
-                cell_ents = [x for x in empty if x not in in_cages and candidates[x[0]][x[1]] <= sset]
+                cell_ents = [x for x in empty if x not in in_cages and not cmask[x] & ~smask]
                 if len(cage_ents) + len(cell_ents) != k:
                     continue
                 affected = []
                 for ci, _, finals in cage_ents:
-                    affected += _restrict_cage(board, cages[ci], candidates,
-                                               {f for f in finals if (f & smask).bit_count() == 1})
+                    keep = {f for f in finals if (f & smask).bit_count() == 1}
+                    if len(keep) < len(finals):
+                        affected += _restrict_cage(board, cages[ci], candidates, keep)
                 for r, c in empty:
                     if (r, c) not in in_cages and (r, c) not in cell_ents and candidates[r][c] & sset:
                         affected.append((cell(r, c), sorted(candidates[r][c] & sset)))
                         candidates[r][c] -= sset
                 if affected:
                     changed = True
+                    states = None
+                    cmask = {x: to_mask(candidates[x[0]][x[1]]) for x in empty}
                     if log is not None:
                         where = ", ".join([f"cage sum={cages[ci][0]}" for ci, _, _ in cage_ents]
                                           + [cell(*x) for x in cell_ents])
@@ -1769,8 +1787,11 @@ def eliminate_common_peers(candidates, board, cages, log=None, single_step=False
     changed = False
     cage_of = {tuple(x): i for i, (_, cls, _) in enumerate(cages) for x in cls}
 
-    def sees(a, b):
-        return _sees(a, b) or (a in cage_of and cage_of.get(a) == cage_of.get(b))
+    seen_by = {}  # cell -> every cell it sees through a row, column, box or cage
+    for r in range(9):
+        for c in range(9):
+            mates = {tuple(x) for x in cages[cage_of[(r, c)]][1]} if (r, c) in cage_of else set()
+            seen_by[(r, c)] = {x for x in _PEER_SET[(r, c)]} | mates
 
     states = {i: _cage_state(board, cage, candidates) for i, cage in enumerate(cages)}
     groups = []  # (digit, cells that may hold it, description)
@@ -1808,15 +1829,14 @@ def eliminate_common_peers(candidates, board, cages, log=None, single_step=False
     for d, spots, why in groups:
         if not spots:
             continue
-        spot_set = set(spots)
+        # A cell that sees every spot sees the first one, so only its peers qualify
         affected = []
-        for r in range(9):
-            for c in range(9):
-                if (r, c) in spot_set or board[r][c] or d not in candidates[r][c]:
-                    continue
-                if all(sees((r, c), s) for s in spots):
-                    candidates[r][c].discard(d)
-                    affected.append((cell(r, c), [d]))
+        for r, c in seen_by[spots[0]]:
+            if board[r][c] or d not in candidates[r][c] or (r, c) in spots:
+                continue
+            if all(s in seen_by[(r, c)] for s in spots):
+                candidates[r][c].discard(d)
+                affected.append((cell(r, c), [d]))
         if affected:
             changed = True
             if log is not None:

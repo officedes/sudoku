@@ -515,43 +515,40 @@ def play_mode(cages, solution):
 
                 if in_grid:
                     shift = pygame.key.get_mods() & pygame.KMOD_SHIFT
-                    if event.button == 3:  # right click: select cage or user mark
-                        deleted_mark = False
-                        for mi, uc in enumerate(user_cages):
-                            if (gr, gc) in uc["cells"]:
-                                selected = set(uc["cells"])
-                                selected_mark = mi
-                                s = f"sum={uc['sum']}" if uc.get("sum") else "no sum"
-                                message = f"User mark ({s}, {len(selected)} cells) — click Del Mark to remove"
-                                msg_color = (0, 80, 160)
-                                deleted_mark = True
-                                break
-                        if not deleted_mark:
-                            selected_mark = None
-                            ci = cell_cage_map.get((gr, gc))
-                            if ci is not None:
-                                cage_cells_list = cages[ci][1]
-                                cage_set = {(r, c) for r, c in cage_cells_list}
-                                if shift:
-                                    selected |= cage_set
-                                else:
-                                    selected = cage_set
-                                message = f"Cage sum={cages[ci][0]} ({len(selected)} cells)"
-                                msg_color = (60, 60, 80)
+                    if event.button == 3:  # right click: select the puzzle's cage, even under a mark
+                        selected_mark = None
+                        ci = cell_cage_map.get((gr, gc))
+                        if ci is not None:
+                            cage_set = {(r, c) for r, c in cages[ci][1]}
+                            if shift:
+                                selected |= cage_set
+                            else:
+                                selected = cage_set
+                            message = f"Cage sum={cages[ci][0]} ({len(selected)} cells)"
+                            msg_color = (60, 60, 80)
                     elif shift:
                         # Shift+click: add/remove cell from selection
                         if (gr, gc) in selected:
                             selected.discard((gr, gc))
                         else:
                             selected.add((gr, gc))
-                    elif (gr, gc) in selected and len(selected) == 1 and selected_mark is None:
+                    elif (gr, gc) in selected and len(selected) == 1:
                         # Click already-selected cell: toggle pencil mode
                         pencil_mode = not pencil_mode
                         message = f"{'Pencil' if pencil_mode else 'Place'} mode"
                         msg_color = (0, 120, 0) if pencil_mode else (60, 60, 80)
                     else:
                         selected = {(gr, gc)}
-                        selected_mark = None
+                        # A cell in one of the player's marks shows that mark (the
+                        # newest, if several) like a puzzle cage: its combinations
+                        # in the bar, clickable; right-click reaches the cage
+                        selected_mark = next((mi for mi in range(len(user_cages) - 1, -1, -1)
+                                              if (gr, gc) in user_cages[mi]["cells"]), None)
+                        if selected_mark is not None:
+                            uc = user_cages[selected_mark]
+                            s = f"sum={uc['sum']}" if uc.get("sum") is not None else "no sum"
+                            message = f"Your mark ({s}, {len(uc['cells'])} cells) — right-click for the cage"
+                            msg_color = (0, 80, 160)
                         # Clicking a placed digit highlights all cells with that digit
                         if board[gr][gc] != 0:
                             highlight_digit = board[gr][gc]
@@ -1090,8 +1087,17 @@ def play_mode(cages, solution):
                 lines = ["Select a cell to see its cage's combinations",
                          "Click a combination to rule it out"]
             elif len(sel_areas) > 1:
-                total = sum(a[1] or 0 for a in sel_areas)
-                lines = [f"{len(sel_areas)} cages selected, total {total}"]
+                # A cage counts in full only when all of it is selected; from a
+                # partly selected one just its placed digits in the selection count
+                full = [a for a in sel_areas if {tuple(x) for x in a[2]} <= selected]
+                in_full = {tuple(x) for a in full for x in a[2]}
+                rest = [cl for cl in selected if cl not in in_full]
+                total = sum(a[1] for a in full) + sum(board[r][c] for r, c in rest)
+                open_cells = sum(1 for r, c in rest if not board[r][c])
+                line = f"{len(sel_areas)} cages selected, total {total}"
+                if open_cells:
+                    line += f" + {open_cells} open cell{'s' if open_cells != 1 else ''}"
+                lines = [line]
             elif sel_areas[0][1] is None:
                 lines = ["Your mark has no sum", "Re-mark it with one to get combinations"]
             else:

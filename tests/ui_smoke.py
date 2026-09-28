@@ -100,7 +100,7 @@ def main():
          24: click(cell_pt(3, 3)), 26: click(cell_pt(3, 4), shift=True), 28: click(cell_pt(4, 4), shift=True),
          30: click(btn_pt("Mark")),
          32: key(pygame.K_1, "1"), 33: key(pygame.K_5, "5"), 34: key(pygame.K_RETURN),
-         38: click(cell_pt(3, 3), button=3),
+         38: click(cell_pt(3, 3)),
          41: ["shot:play_mark_selected"],
          43: click(btn_pt("Fill", with_del=True)),
          48: click(cell_pt(6, 6), button=3),
@@ -110,7 +110,7 @@ def main():
     first_chip = (GX + 104, 48 + 14)  # first chip right of the "15 =" heading
     run({3: click(cell_pt(3, 3)), 5: click(cell_pt(3, 4), shift=True), 7: click(cell_pt(4, 4), shift=True),
          9: click(btn_pt("Mark")), 11: key(pygame.K_1, "1"), 12: key(pygame.K_5, "5"), 13: key(pygame.K_RETURN),
-         15: click(cell_pt(3, 3), button=3),
+         15: click(cell_pt(3, 3)),
          17: click(first_chip),
          20: ["shot:play_mark_combo_excluded"]},
         lambda: visualizer.play_mode(cages, sol))

@@ -1512,3 +1512,7 @@ def main():
         clock.tick(60)
 
     pygame.quit()
+
+
+if __name__ == "__main__":
+    main()

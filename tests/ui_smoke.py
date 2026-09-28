@@ -115,7 +115,8 @@ def main():
          20: ["shot:play_mark_combo_excluded"]},
         lambda: visualizer.play_mode(cages, sol))
 
-    # The marks list: select a marked cell, open the list from the chevron, rule out a combo, delete the mark
+    # The list: select a marked cell, open it from the chevron (the cage row, then the mark), rule out a
+    # combo of the cage, delete the mark
     toggle = (GX + 17, 48 + 15)
     panel_row = 48 + 36 + 6
     run({3: click(cell_pt(3, 3)), 5: click(cell_pt(3, 4), shift=True), 7: click(cell_pt(4, 4), shift=True),
@@ -123,7 +124,7 @@ def main():
          15: click(cell_pt(3, 3)), 17: click(toggle),
          19: click((GX + 12 + 60, panel_row + 18)),
          22: ["shot:play_marks_panel"],
-         24: click((GX + 540 - 22, panel_row + 19)),
+         24: click((GX + 540 - 22, panel_row + 40 + 19)),  # the mark's bin, below the cage's row
          27: ["shot:play_marks_deleted"]},
         lambda: visualizer.play_mode(cages, sol))
 

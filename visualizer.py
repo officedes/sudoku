@@ -1074,12 +1074,16 @@ def play_mode(cages, solution):
         # chevron); hovering a row of that list shows just its mark
         visible_marks = [mi for mi, uc in enumerate(user_cages)
                          if mi == selected_mark or not selected.isdisjoint(uc["cells"])]
-        hovered_mark = None
+        # The list under the chevron: the puzzle's cages through the selection
+        # (a mark can cover them), then the marks
+        panel_rows = ([("cage", ci) for ci in sorted({cell_cage_map[cl] for cl in selected if cl in cell_cage_map})]
+                      + [("mark", mi) for mi in visible_marks])
+        hovered_row = None
         if marks_open and marks_panel_rect is not None and marks_panel_rect.collidepoint(mouse):
             row = (mouse[1] - marks_panel_rect.y - 6) // 40
-            hovered_mark = visible_marks[row] if 0 <= row < len(visible_marks) else None
+            hovered_row = panel_rows[row] if 0 <= row < len(panel_rows) else None
         for mi, uc in enumerate(user_cages):
-            if mi not in visible_marks or hovered_mark not in (None, mi):
+            if mi not in visible_marks or hovered_row not in (None, ("mark", mi)):
                 continue
             for r, c in uc["cells"]:
                 x, y = cell_xy(r, c)
@@ -1157,18 +1161,26 @@ def play_mode(cages, solution):
                 t = (font_top if i == 0 else font_info).render(line, True, T["text"] if i == 0 else T["muted"])
                 screen.blit(t, (bar_x, bar_y + 6 + i * 22))
 
-        # --- The player's marks, one row each: "sum = [chips]" and a bin to delete ---
+        # --- The list: one row per cage or mark, "sum = [chips]", and a bin on marks ---
         marks_panel_rect = None
         mark_trash_rects = []
         if marks_open and visible_marks:
             row_h = 40
-            marks_panel_rect = pygame.Rect(GRID_OFFSET_X - 4, COMBO_Y + 36, GRID_SIZE + 8, 12 + row_h * len(visible_marks))
+            marks_panel_rect = pygame.Rect(GRID_OFFSET_X - 4, COMBO_Y + 36, GRID_SIZE + 8, 12 + row_h * len(panel_rows))
             pygame.draw.rect(screen, T["panel"], marks_panel_rect, border_radius=12)
             pygame.draw.rect(screen, T["key_edge"], marks_panel_rect, 1, border_radius=12)
-            for row, mi in enumerate(visible_marks):
-                uc = user_cages[mi]
+            for row, (kind, idx) in enumerate(panel_rows):
                 ry = marks_panel_rect.y + 6 + row * row_h
                 x0 = marks_panel_rect.x + 12
+                if kind == "cage":
+                    cs, ccls, _ = cages[idx]
+                    filled = [board[r][c] for r, c in ccls if board[r][c]]
+                    head = font_combo_head.render(f"{cs - sum(filled)} =", True, T["text"])
+                    screen.blit(head, (x0, ry + 3))
+                    draw_chips(idx, cs, ccls, x0 + head.get_width() + 10, ry + 5, marks_panel_rect.right - 12, 1)
+                    continue
+                mi = idx
+                uc = user_cages[mi]
                 trash = pygame.Rect(marks_panel_rect.right - 42, ry + 4, 30, 30)
                 mark_trash_rects.append((trash, mi))
                 tc = T["digit_bad"] if trash.collidepoint(mouse) else T["text"]

@@ -5,6 +5,8 @@ Usage:
     python main.py --level 4                Needs contradiction checks (levels: 1 direct,
                                             2 candidate elimination, 3 advanced killer logic, 4 contradiction)
     python main.py --contradictions 5       Harder: stuck 5+ times, each broken by a first-order contradiction sweep
+    python main.py --uncaged 2              Leave 2 cells in no cage
+    python main.py --big-cages 2            At least 2 cages of 7-9 cells
     python main.py --workers 4              Grids tried in parallel
     python main.py --list                   List saved puzzles
     python main.py --difficulty             Show difficulty of all puzzles
@@ -243,12 +245,14 @@ def generate_custom_cages(board, min_size=2, max_size=5, big_cage=None):
     return cages
 
 
-def generate_at_level(min_level, workers, contradictions=0):
+def generate_at_level(min_level, workers, contradictions=0, uncaged=0, big_cages=0):
     """Generate a puzzle needing technique level `min_level`..4, trying several
     grids in parallel and keeping the first that works.
 
     `contradictions` > 0 asks for a harder level-4 puzzle needing at least that
     many first-order contradiction sweeps; those have fewer, bigger cages.
+    `uncaged` leaves that many cells in no cage; `big_cages` asks for at least
+    that many cages of 7-9 cells.
     """
     if contradictions:
         min_level, cages = 4, (20, 27)
@@ -256,11 +260,17 @@ def generate_at_level(min_level, workers, contradictions=0):
     else:
         cages = (24, 27)
         target = f"level {min_level}+ ({LEVEL_NAMES[min_level]} or harder)"
+    if uncaged:
+        target += f", {uncaged} uncaged cell{'s' if uncaged != 1 else ''}"
+    if big_cages:
+        target += f", {big_cages}+ cage{'s' if big_cages != 1 else ''} of 7-9 cells"
     print(f"Generating: {target}, {workers} grids in parallel")
+    job = dict(min_level=min_level, cages=cages, min_contradictions=contradictions,
+               uncaged=uncaged, big_cages=big_cages)
     start = time.time()
     result = None
     with Pool(workers) as pool:
-        for result in pool.imap_unordered(level_attempt, [(min_level, contradictions, cages)] * 500):
+        for result in pool.imap_unordered(level_attempt, [job] * 500):
             if result:
                 break
     if not result:
@@ -302,6 +312,8 @@ def main():
                      help="Grids tried in parallel (default: CPU count - 2)")
     gen.add_argument("--contradictions", type=int, default=0,
                      help="Harder level 4: gets stuck N+ times, each needing a first-order contradiction sweep")
+    gen.add_argument("--uncaged", type=int, default=0, help="Leave N cells in no cage")
+    gen.add_argument("--big-cages", type=int, default=0, help="At least N cages of 7-9 cells")
     gen.add_argument("--classic", action="store_true",
                      help="Old random-layout generator; honours the size/sparse options above")
 
@@ -319,6 +331,8 @@ def main():
     parser.add_argument("--level", type=int, default=3, choices=range(1, 5))
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     parser.add_argument("--contradictions", type=int, default=0)
+    parser.add_argument("--uncaged", type=int, default=0)
+    parser.add_argument("--big-cages", type=int, default=0)
     parser.add_argument("--classic", action="store_true")
 
     args = parser.parse_args()
@@ -343,7 +357,7 @@ def main():
 
     # Generation
     if not args.classic:
-        generate_at_level(args.level, args.workers, args.contradictions)
+        generate_at_level(args.level, args.workers, args.contradictions, args.uncaged, args.big_cages)
         return
 
     min_sz, max_sz = args.min_size, args.max_size

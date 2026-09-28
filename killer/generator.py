@@ -304,8 +304,33 @@ def _to_cages(board, groups):
     return [(sum(board[r][c] for r, c in g), [list(x) for x in g], colours[i]) for i, g in enumerate(groups)]
 
 
+def _connected(cells):
+    cells = set(cells)
+    if not cells:
+        return True
+    seen, stack = set(), [next(iter(cells))]
+    while stack:
+        r, c = stack.pop()
+        if (r, c) in seen:
+            continue
+        seen.add((r, c))
+        stack += [x for x in ((r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1)) if x in cells]
+    return seen == cells
+
+
+def _uncage_options(groups, rejected):
+    """(group index, cell) pairs that could leave their cage: one-cell cages
+    first, else edge cells of 3+ cell cages that stay connected without them."""
+    singles = [(i, g[0]) for i, g in enumerate(groups) if len(g) == 1 and g[0] not in rejected]
+    if singles:
+        return singles
+    return [(i, x) for i, g in enumerate(groups) if len(g) >= 3
+            for x in g if x not in rejected and _connected([y for y in g if y != x])]
+
+
 def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
-                      long_size=(6, 8), max_singles=1, min_contradictions=0, attempts=800):
+                      long_size=(6, 8), max_singles=1, min_contradictions=0,
+                      uncaged=0, big_cages=0, attempts=800):
     """Grow a puzzle whose hardest needed technique lies in [min_level, max_level]
     (see solver.LEVEL_NAMES), shaped like published hard killers: a count in
     `cages`, one to a few long snakes of `long_size` cells (each puzzle picks
@@ -323,6 +348,11 @@ def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
     contradiction sweep (never a deeper assumption), which makes harder
     level-4 puzzles.
 
+    `uncaged` leaves that many cells in no cage: once the layout is nearly
+    done, one-cell cages (or edge cells of bigger cages) are dropped while the
+    puzzle stays solvable without them - an uncaged cell gives nothing away.
+    `big_cages` asks for at least that many cages of 7-9 cells.
+
     Returns (cages, solution), or None if this grid got too few cages first.
     """
     import io
@@ -334,40 +364,59 @@ def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
             return solve_killer_sudoku(create_board(), _to_cages(board, groups), verbose=False,
                                        level=lv, stats=stats)[1]
 
+    if big_cages:
+        long_size = (7, 9)
+        long_cages = (big_cages, max(big_cages, long_cages[1]))
     board = create_board()
     populate_board(board)
     groups = [[(r, c)] for r in range(9) for c in range(9)]
     long_quota = randint(*long_cages)
-    long_max = randint(*long_size)
-    # Merging only removes information, so a merge that broke the puzzle once
-    # would break it again later: never retry it.
-    rejected = set()
+    long_max = 9 if big_cages else randint(*long_size)
+    free = []  # cells left out of every cage
+    # Uncaging a one-cell cage also removes a cage, so allow that many fewer
+    min_cages = cages[0] - uncaged
+    # Merging and uncaging only remove information, so a move that broke the
+    # puzzle once would break it again later: never retry it.
+    rejected, rejected_free = set(), set()
     for _ in range(attempts):
-        longs = sum(len(g) >= long_size[0] for g in groups)
-        options = []
-        for a, b in _mergeable(board, groups, long_max):
-            size = len(groups[a]) + len(groups[b])
-            grows_long = max(len(groups[a]), len(groups[b])) >= long_size[0]
-            if size > 5 and not grows_long and longs >= long_quota:
-                continue
-            if (frozenset(groups[a]), frozenset(groups[b])) not in rejected:
-                options.append((a, b))
-        if not options or len(groups) < cages[0]:
+        if len(groups) < min_cages:
             return None
-        # Favour growing the long snakes until the quota is met, then small merges.
-        weights = []
-        for a, b in options:
-            size = len(groups[a]) + len(groups[b])
-            w = size ** 3 if size > 5 or longs < long_quota else 1
-            weights.append(w * (8 if min(len(groups[a]), len(groups[b])) == 1 else 1))
-        a, b = choices(options, weights)[0]
-        merged = [g for i, g in enumerate(groups) if i not in (a, b)] + [groups[a] + groups[b]]
         stats = {}
-        if not solvable(merged, max_level, stats):
-            rejected.add((frozenset(groups[a]), frozenset(groups[b])))
-            continue
-        groups = merged
-        in_shape = (cages[0] <= len(groups) <= cages[1]
+        spots = _uncage_options(groups, rejected_free)             if len(free) < uncaged and len(groups) <= cages[1] + 2 else []
+        if spots:
+            gi, x = choice(spots)
+            trial = [g for g in ([y for y in g if y != x] if i == gi else g for i, g in enumerate(groups)) if g]
+            if not solvable(trial, max_level, stats):
+                rejected_free.add(x)
+                continue
+            groups = trial
+            free.append(x)
+        else:
+            longs = sum(len(g) >= long_size[0] for g in groups)
+            options = []
+            for a, b in _mergeable(board, groups, long_max):
+                size = len(groups[a]) + len(groups[b])
+                grows_long = max(len(groups[a]), len(groups[b])) >= long_size[0]
+                if size > 5 and not grows_long and longs >= long_quota:
+                    continue
+                if (frozenset(groups[a]), frozenset(groups[b])) not in rejected:
+                    options.append((a, b))
+            if not options:
+                return None
+            # Favour growing the long snakes until the quota is met, then small merges.
+            weights = []
+            for a, b in options:
+                size = len(groups[a]) + len(groups[b])
+                w = size ** 3 if size > 5 or longs < long_quota else 1
+                weights.append(w * (8 if min(len(groups[a]), len(groups[b])) == 1 else 1))
+            a, b = choices(options, weights)[0]
+            merged = [g for i, g in enumerate(groups) if i not in (a, b)] + [groups[a] + groups[b]]
+            if not solvable(merged, max_level, stats):
+                rejected.add((frozenset(groups[a]), frozenset(groups[b])))
+                continue
+            groups = merged
+        in_shape = (min_cages <= len(groups) <= cages[1]
+                    and len(free) >= uncaged
                     and sum(len(g) == 1 for g in groups) <= max_singles
                     and sum(len(g) >= long_size[0] for g in groups) >= long_cages[0]
                     and stats.get("contradictions", 0) >= min_contradictions)
@@ -379,7 +428,6 @@ def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
 def level_attempt(job):
     """One generate_to_level try on a fresh grid; a picklable pool worker.
 
-    `job` is (min_level, min_contradictions, cage count range).
+    `job` is the dict of generate_to_level arguments.
     """
-    min_level, min_contradictions, cages = job
-    return generate_to_level(min_level, cages=cages, min_contradictions=min_contradictions)
+    return generate_to_level(**job)

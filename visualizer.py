@@ -1069,8 +1069,20 @@ def play_mode(cages, solution):
                         screen.blit(ptxt, (cx - ptxt.get_width() / 2, cy - ptxt.get_height() / 2))
 
         # The player's marks on top of the digits, like the app: a dashed box in
-        # each marked cell, and the sum on a patch of the cell's colour
-        for uc in user_cages:
+        # each marked cell, and the sum on a patch of the cell's colour. A mark
+        # only shows while you look at it: a selected cell is in it, or the
+        # marks list is open (just the hovered row's mark when hovering one)
+        hovered_mark = None
+        if marks_open and marks_panel_rect is not None and marks_panel_rect.collidepoint(mouse):
+            row = (mouse[1] - marks_panel_rect.y - 6) // 40
+            hovered_mark = row if 0 <= row < len(user_cages) else None
+        for mi, uc in enumerate(user_cages):
+            if hovered_mark is not None:
+                shown = mi == hovered_mark
+            else:
+                shown = marks_open or mi == selected_mark or not selected.isdisjoint(uc["cells"])
+            if not shown:
+                continue
             for r, c in uc["cells"]:
                 x, y = cell_xy(r, c)
                 x1, y1, x2, y2 = x + 3, y + 3, x + CELL_SIZE - 4, y + CELL_SIZE - 4

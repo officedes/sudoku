@@ -372,12 +372,13 @@ def _plant_big(board, count, sizes=(7, 9), tries=500):
 
 def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
                       long_size=(6, 8), max_singles=1, min_contradictions=0,
-                      uncaged=0, big_cages=0, attempts=800):
+                      uncaged=0, big_cages=0, rescue_singles=3, rescue_uncage=True, attempts=800):
     """Grow a puzzle whose hardest needed technique lies in [min_level, max_level]
     (see solver.LEVEL_NAMES), shaped like published hard killers: a count in
     `cages`, one to a few long snakes of `long_size` cells (each puzzle picks
     its own longest), everything else at most 5 cells, and at most
-    `max_singles` one-cell cages.
+    `max_singles` one-cell cages (`rescue_singles` when merging gets stuck
+    on boxed-in ones, which `rescue_uncage` may also leave uncaged).
 
     Starts from 81 one-cell cages (the solution itself), then merges
     neighbouring cages one at a time, keeping a merge only while the puzzle
@@ -437,6 +438,7 @@ def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
     # Merging and uncaging only remove information, so a move that broke the
     # puzzle once would break it again later: never retry it.
     rejected, rejected_free = set(), set()
+    sweeps = 0  # contradiction sweeps the current layout needs
     for _ in range(attempts):
         if len(groups) < min_cages:
             return None
@@ -447,11 +449,13 @@ def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
         if not wanted and not options:
             # Merging is stuck, usually on one-cell cages boxed in by cages
             # that already hold their digit: leave those cells uncaged instead
-            spots = [(gi, x) for gi, x in _uncage_options(groups, rejected_free) if len(groups[gi]) == 1]
+            spots = [(gi, x) for gi, x in _uncage_options(groups, rejected_free)
+                     if len(groups[gi]) == 1] if rescue_uncage else []
             if not spots:
                 # The one-cell cages left are givens the puzzle needs; up to 3
                 # is still app-like (one of the reference puzzles has 3)
-                if sum(len(g) == 1 for g in groups) <= 3 and len(free) >= uncaged \
+                if sum(len(g) == 1 for g in groups) <= rescue_singles and len(free) >= uncaged \
+                        and sweeps >= min_contradictions \
                         and min_cages <= len(groups) <= cages[1] \
                         and sum(len(g) >= long_size[0] for g in groups) >= long_cages[0] \
                         and (min_level == 1 or not solvable(groups, min_level - 1)):
@@ -467,6 +471,7 @@ def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
                 min_cages -= 1
             groups = trial
             free.append(x)
+            sweeps = stats.get("contradictions", 0)
         else:
             longs = sum(len(g) >= long_size[0] for g in groups)
             # Favour growing the long snakes until the quota is met, then small merges.
@@ -481,11 +486,12 @@ def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
                 rejected.add((frozenset(groups[a]), frozenset(groups[b])))
                 continue
             groups = merged
+        sweeps = stats.get("contradictions", 0)
         in_shape = (min_cages <= len(groups) <= cages[1]
                     and len(free) >= uncaged
                     and sum(len(g) == 1 for g in groups) <= max_singles
                     and sum(len(g) >= long_size[0] for g in groups) >= long_cages[0]
-                    and stats.get("contradictions", 0) >= min_contradictions)
+                    and sweeps >= min_contradictions)
         if in_shape and (min_level == 1 or not solvable(groups, min_level - 1)):
             return _to_cages(board, groups), [row[:] for row in board]
     return None

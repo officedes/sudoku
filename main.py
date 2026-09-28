@@ -8,6 +8,8 @@ Usage:
     python main.py --uncaged 2              Leave 2 cells in no cage
     python main.py --big-cages 2            At least 2 cages of 7-9 cells
     python main.py --workers 4              Grids tried in parallel
+    python main.py --count 10               A set of 10 puzzles
+    python main.py --assassin               Shaped like the Assassin series (no givens, cages of 2-5)
     python main.py --list                   List saved puzzles
     python main.py --difficulty             Show difficulty of all puzzles
 
@@ -245,14 +247,17 @@ def generate_custom_cages(board, min_size=2, max_size=5, big_cage=None):
     return cages
 
 
-def generate_at_level(min_level, workers, contradictions=0, uncaged=0, big_cages=0):
-    """Generate a puzzle needing technique level `min_level`..4, trying several
-    grids in parallel and keeping the first that works.
+def generate_at_level(min_level, workers, contradictions=0, uncaged=0, big_cages=0, count=1,
+                      assassin=False):
+    """Generate `count` puzzles needing technique level `min_level`..4, trying
+    several grids in parallel and keeping the first ones that work.
 
     `contradictions` > 0 asks for a harder level-4 puzzle needing at least that
     many first-order contradiction sweeps; those have fewer, bigger cages.
     `uncaged` leaves that many cells in no cage; `big_cages` asks for at least
-    that many cages of 7-9 cells.
+    that many cages of 7-9 cells. `assassin` shapes them like the Assassin
+    series: every cell caged, no one-cell cages (one at most when merging
+    gets stuck), cages mostly of 2-5 cells with an occasional 6.
     """
     if contradictions:
         min_level, cages = 4, (20, 27)
@@ -264,27 +269,37 @@ def generate_at_level(min_level, workers, contradictions=0, uncaged=0, big_cages
         target += f", {uncaged} uncaged cell{'s' if uncaged != 1 else ''}"
     if big_cages:
         target += f", {big_cages}+ cage{'s' if big_cages != 1 else ''} of 7-9 cells"
+    if assassin:
+        target += ", Assassin shape"
     print(f"Generating: {target}, {workers} grids in parallel")
     # Exactly the asked level: solvable there, not one below (level 4 when
     # asking for contradiction sweeps)
     job = dict(min_level=min_level, max_level=4 if contradictions else min_level, cages=cages,
                min_contradictions=contradictions,
                uncaged=uncaged, big_cages=big_cages)
+    if assassin:
+        # Measured on the 180 Assassins: 25-27 cages (fewer when they need
+        # contradiction sweeps), longest cage 5, a 6-cell one in 1 of 6
+        job.update(cages=(22, 28) if contradictions else (24, 29), long_cages=(0, 1), long_size=(6, 6),
+                   max_singles=0, rescue_singles=1, rescue_uncage=False)
     start = time.time()
-    result = None
-    with Pool(workers) as pool:
-        for result in pool.imap_unordered(level_attempt, [job] * 500):
-            if result:
+    made = 0
+    with Pool(workers, maxtasksperchild=10) as pool:
+        for result in pool.imap_unordered(level_attempt, [job] * 500 * count):
+            if not result:
+                continue
+            cages, solution = result
+            made += 1
+            sizes = sorted(len(c[1]) for c in cages)
+            print(f"[{made}/{count}] {time.time() - start:.1f}s: {len(cages)} cages, sizes {sizes}")
+            if count == 1:
+                print_board_colored(solution, cages)
+            save_puzzle(cages, solution)
+            print(estimate_difficulty(cages)["summary"])
+            if made == count:
                 break
-    if not result:
-        print("Could not generate a puzzle at this level.")
-        return
-    cages, solution = result
-    sizes = sorted(len(c[1]) for c in cages)
-    print(f"Done in {time.time() - start:.1f}s: {len(cages)} cages, sizes {sizes}")
-    print_board_colored(solution, cages)
-    save_puzzle(cages, solution)
-    print(estimate_difficulty(cages)["summary"])
+    if made < count:
+        print(f"Could not generate {count - made} of the {count} puzzles at this level.")
 
 
 # =============================================================================
@@ -317,6 +332,9 @@ def main():
                      help="Harder level 4: gets stuck N+ times, each needing a first-order contradiction sweep")
     gen.add_argument("--uncaged", type=int, default=0, help="Leave N cells in no cage")
     gen.add_argument("--big-cages", type=int, default=0, help="At least N cages of 7-9 cells")
+    gen.add_argument("--count", type=int, default=1, help="Generate a set of N puzzles")
+    gen.add_argument("--assassin", action="store_true",
+                     help="Shape like the Assassin series: no one-cell cages, cages of 2-5 (rarely 6)")
     gen.add_argument("--classic", action="store_true",
                      help="Old random-layout generator; honours the size/sparse options above")
 
@@ -336,6 +354,8 @@ def main():
     parser.add_argument("--contradictions", type=int, default=0)
     parser.add_argument("--uncaged", type=int, default=0)
     parser.add_argument("--big-cages", type=int, default=0)
+    parser.add_argument("--count", type=int, default=1)
+    parser.add_argument("--assassin", action="store_true")
     parser.add_argument("--classic", action="store_true")
 
     args = parser.parse_args()
@@ -360,7 +380,8 @@ def main():
 
     # Generation
     if not args.classic:
-        generate_at_level(args.level, args.workers, args.contradictions, args.uncaged, args.big_cages)
+        generate_at_level(args.level, args.workers, args.contradictions, args.uncaged, args.big_cages,
+                          args.count, args.assassin)
         return
 
     min_sz, max_sz = args.min_size, args.max_size

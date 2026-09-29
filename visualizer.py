@@ -314,7 +314,8 @@ def play_mode(cages, solution):
     highlight_digit = None  # 1-9 to highlight all cells containing this digit
     message = "Click a cell, type 1-9 or use the keypad. P = pencil, right-click = select cage."
     pad_force = None  # "place" / "pencil" for a digit coming from the keypad
-    hint_panel = None  # {"cell", "title", "lines"}: the last hint's explanation, until the next click or key
+    hint_panel = None  # {"cells", "title", "lines"}: the last hint's explanation, until the next click or key
+    hinted_steps = set()  # step texts Hint already gave, so the next hint moves on
     msg_color = (60, 60, 80)
 
     # Precompute which cells are in cages (for coloring uncaged cells differently)
@@ -437,48 +438,50 @@ def play_mode(cages, solution):
         return filled_count, len(targets)
 
     def do_hint():
-        """Place the next logical cell from the player's position and explain it.
+        """Explain the next step from the player's position, one at a time.
 
         Starts from the player's correct digits (wrong ones are ignored), so the
-        explanation matches the grid on screen.
+        explanation matches the grid on screen. Eliminations the pencil marks
+        already show, and steps already hinted, are skipped. An elimination's
+        digits leave the pencil marks that still hold them (undoable); a
+        placement is only explained - the player makes it.
         """
         nonlocal hints_used, hint_panel
         start = [[board[r][c] if board[r][c] == solution[r][c] else 0 for c in range(9)] for r in range(9)]
         _, steps = _solve_and_explain(cages, board=start, stop_after=1)
-        idx = next((i for i, s in enumerate(steps) if s["type"] == "placement"), None)
-        if idx is None:
-            return None
-        step = steps[idx]
-        r, c = step["cell"]
-        val = step["value"]
-        batch = [("place", r, c, board[r][c], set(pencil[r][c]))]
-        board[r][c] = val
-        pencil[r][c] = set()
-        _remove_pencil_peers(r, c, val, batch)
-        history.append(("batch", batch))
-        hints_used += 1
-        # Conclusion first, then only the eliminations that fed it: ones that
-        # removed candidates from this cell, or removed its digit from a cell
-        # sharing a row, column or box with it (what naked/hidden singles rest on)
-        lines = [ln for ln in step.get("explanation", "").splitlines() if ln.strip()]
-        key_elims, others, prev = [], 0, None
-        for s in steps[:idx]:
+        prev = None
+        for s in steps:
             now = s.get("candidates")
-            if s["type"] == "elimination" and prev is not None and now is not None:
-                removed = {(k, d) for k, ds in prev.items() for d in ds if d not in now.get(k, ds)}
-                if any(k == cell_name or (d == val and _sees((r, c), (int(k[1:]) - 1, _COL.index(k[0]))))
-                       for k, d in removed for cell_name in [f"{_COL[c]}{r+1}"]):
-                    key_elims.append(f"  {s['text']}")
-                else:
-                    others += 1
+            lines = [ln for ln in s.get("explanation", "").splitlines() if ln.strip()]
+            if s["type"] == "placement":
+                r, c = s["cell"]
+                if s["text"] not in hinted_steps:  # asking again for the same placement is free
+                    hinted_steps.add(s["text"])
+                    hints_used += 1
+                hint_panel = {"cells": [(r, c)], "title": s["text"],
+                              "lines": lines + [f"Place {s['value']} in {_COL[c]}{r+1} yourself when you're ready."]}
+                return f"Hint: {s['text']}"
+            if s["type"] == "elimination" and prev is not None and now is not None and s["text"] not in hinted_steps:
+                removed = [(int(k[1:]) - 1, _COL.index(k[0]), d)
+                           for k, ds in prev.items() for d in ds if d not in now.get(k, ds)]
+                # New to the player unless their pencil marks already rule it out
+                new = [(r, c, d) for r, c, d in removed
+                       if board[r][c] == 0 and (not pencil[r][c] or d in pencil[r][c])]
+                if new:
+                    hinted_steps.add(s["text"])
+                    batch = []
+                    for r, c, d in new:
+                        if d in pencil[r][c]:
+                            batch.append(("pencil_auto", r, c, board[r][c], set(pencil[r][c])))
+                            pencil[r][c].discard(d)
+                    if batch:
+                        history.append(("batch", batch))
+                    hints_used += 1
+                    hint_panel = {"cells": sorted({(r, c) for r, c, _ in new}), "title": s["text"], "lines": lines}
+                    return f"Hint: {s['text']}"
             if now is not None:
                 prev = now
-        if key_elims:
-            lines += ["Because of:"] + key_elims
-        if others:
-            lines.append(f"({others} other elimination{'s' if others != 1 else ''} along the way weren't needed here)")
-        hint_panel = {"cell": (r, c), "title": step["text"], "lines": lines}
-        return f"Hint: {step['text']}"
+        return None
 
     def _undo_entry(entry):
         if entry[0] == "combo_excl":
@@ -545,6 +548,7 @@ def play_mode(cages, solution):
         history.clear()
         cage_excluded.clear()
         cage_excluded_combos.clear()
+        hinted_steps.clear()
         selected.clear()
         start_time = _time.time()
         hints_used = 0
@@ -1255,9 +1259,9 @@ def play_mode(cages, solution):
 
         # --- Hint explanation panel over the bottom area ---
         if hint_panel:
-            hr, hc = hint_panel["cell"]
-            x, y = cell_xy(hr, hc)
-            pygame.draw.rect(screen, T["hl"], (x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4), 3, border_radius=8)
+            for hr, hc in hint_panel["cells"]:
+                x, y = cell_xy(hr, hc)
+                pygame.draw.rect(screen, T["hl"], (x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4), 3, border_radius=8)
             panel = pygame.Rect(GRID_OFFSET_X - 8, MSG_Y - 4, GRID_SIZE + 16, WINDOW_H - MSG_Y - 4)
             pygame.draw.rect(screen, T["tip"], panel, border_radius=10)
             pygame.draw.rect(screen, T["hl"], panel, 1, border_radius=10)

@@ -4,23 +4,18 @@ from itertools import combinations
 from killer.helpers import cell
 
 
+_DIGIT_SET = set(range(1, 10))  # a set, so the difference below is a fresh mutable set
+
+
 def get_possible_values(board, row, col):
     """Candidates for a cell based on Sudoku row/column/box constraints."""
     if board[row][col] != 0:
         return set()
-    used = set()
-    for j in range(9):
-        if board[row][j] != 0:
-            used.add(board[row][j])
-    for i in range(9):
-        if board[i][col] != 0:
-            used.add(board[i][col])
     br, bc = (row // 3) * 3, (col // 3) * 3
-    for i in range(3):
-        for j in range(3):
-            if board[br + i][bc + j] != 0:
-                used.add(board[br + i][bc + j])
-    return set(range(1, 10)) - used
+    used = set(board[row])
+    used.update([board[i][col] for i in range(9)], board[br][bc:bc + 3], board[br + 1][bc:bc + 3],
+                board[br + 2][bc:bc + 3])
+    return _DIGIT_SET - used
 
 
 def is_solved(board):

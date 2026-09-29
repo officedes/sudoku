@@ -53,6 +53,29 @@ def apply_cage_deduction(board, cages):
     return False
 
 
+_RULE_OF_45 = {}
+
+
+def _rule_of_45_houses(cages):
+    """(house name, cage total, the one uncovered cell, cage sums) for each
+    house whose cages fully inside it leave exactly one cell; depends only on
+    the layout, so it is worked out once per layout."""
+    if _RULE_OF_45.get("cages") is cages:
+        return _RULE_OF_45["result"]
+    result = []
+    for house_type in ["row", "col", "box"]:
+        for i in range(9):
+            house_cells = get_house_cells(house_type, i)
+            house_cages = [(s, cls) for s, cls, _ in cages if all(c in house_cells for c in cls)]
+            covered = {c for _, cls in house_cages for c in cls}
+            remaining = [c for c in house_cells if c not in covered]
+            if len(remaining) == 1:
+                result.append((house_name(house_type, i), sum(s for s, _ in house_cages), remaining[0],
+                               ", ".join(f"sum={s}" for s, _ in house_cages)))
+    _RULE_OF_45.update(cages=cages, result=result)
+    return result
+
+
 def apply_rule_of_45(board, cages):
     """Every row, column, and 3x3 box sums to exactly 45.
 
@@ -62,25 +85,14 @@ def apply_rule_of_45(board, cages):
     Example: Row 1 has cages summing to 38 that are fully inside it.
     The one uncovered cell must be 45 - 38 = 7.
     """
-    for house_type in ["row", "col", "box"]:
-        for i in range(9):
-            house_cells = get_house_cells(house_type, i)
-            # Find cages where ALL cells are inside this house
-            house_cages = [(s, cls) for s, cls, _ in cages if all(c in house_cells for c in cls)]
-            cage_total = sum(s for s, _ in house_cages)
-            covered = {c for _, cls in house_cages for c in cls}
-            remaining = [c for c in house_cells if c not in covered]
-            if len(remaining) != 1:
-                continue
-            r, c = remaining[0]
-            val = 45 - cage_total
-            if board[r][c] == 0 and 1 <= val <= 9:
-                board[r][c] = val
-                cage_list = ", ".join(f"sum={s}" for s, _ in house_cages)
-                print(f"Set cell ({r},{c}) to {val} via Rule of 45 ({house_name(house_type, i)})")
-                print(f"  {house_name(house_type, i)}: cages inside sum to {cage_total} ({cage_list})")
-                print(f"  One uncovered cell: {cell(r, c)} = 45 - {cage_total} = {val}")
-                return True
+    for hname, cage_total, (r, c), cage_list in _rule_of_45_houses(cages):
+        val = 45 - cage_total
+        if board[r][c] == 0 and 1 <= val <= 9:
+            board[r][c] = val
+            print(f"Set cell ({r},{c}) to {val} via Rule of 45 ({hname})")
+            print(f"  {hname}: cages inside sum to {cage_total} ({cage_list})")
+            print(f"  One uncovered cell: {cell(r, c)} = 45 - {cage_total} = {val}")
+            return True
     return False
 
 
@@ -603,7 +615,7 @@ def eliminate_box_line(candidates, log=None, single_step=False):
                         changed = True
                     if affected and log is not None:
                         hn = house_name(house_type, i)
-                        log.append(f"Box-line: {num} in {hn} only in box {brow*3+bcol//3+1} -> removed {num} from {', '.join(affected)}")
+                        log.append(f"Box-line: {num} in {hn} only in box {brow * 3 + bcol + 1} -> removed {num} from {', '.join(affected)}")
                         if single_step:
                             return True
     return changed
@@ -759,7 +771,7 @@ def eliminate_cage_box_reduction(candidates, board, cages, log=None, single_step
                     changed = True
                 if affected and log is not None:
                     cage_str = cells(cage_cells)
-                    log.append(f"Cage-box: {num} must be in cage sum={cage_sum} [{cage_str}], only in box {br*3+bc//3+1} -> removed {num} from {', '.join(affected)}")
+                    log.append(f"Cage-box: {num} must be in cage sum={cage_sum} [{cage_str}], only in box {br * 3 + bc + 1} -> removed {num} from {', '.join(affected)}")
                     if single_step:
                         return True
     return changed
@@ -1196,7 +1208,6 @@ def _sum_constraints(cages, max_cells=5, max_large=8):
         return _SUM_CONSTRAINTS["result"]
     # Only the current puzzle is kept, so generating many layouts can't grow this.
     _SUM_CONSTRAINTS.clear()
-    _SUPPORT_CACHE.clear()
     caged = {tuple(x) for _, cls, _ in cages for x in cls}
     seen, small, large = set(), [], []
     for name, total, coef in _REGIONS:
@@ -1316,31 +1327,41 @@ def _bounds_and_parity(terms, target, domains):
     return allowed
 
 
-def _prune_by_sum(terms, target, why, candidates, board, cage_of, exact=True):
+def _prune_by_sum(terms, target, candidates, board, cage_of, exact=True):
     """Remove candidates no assignment meeting the sum can use; returns removals.
 
     `exact` enumerates assignments (small constraints); otherwise it uses
-    bounds and parity. `why` names the constraint and keys the result cache.
+    bounds and parity.
     """
     domains = {}
     for (r, c), _ in terms:
         domains[(r, c)] = {board[r][c]} if board[r][c] else candidates[r][c]
     if any(not d for d in domains.values()) or all(board[r][c] for (r, c), _ in terms):
         return []
+    cells_ = [x for x, _ in terms]
     if exact:
-        cache_key = (why, tuple(to_mask(domains[x]) for x, _ in terms))
+        # The answer depends on the terms, the target, the domains and which
+        # cells share a cage - not on the rest of the layout - so the cache
+        # carries over between the thousands of layouts the generator tries.
+        shared = tuple(next(j for j, y in enumerate(cells_) if cage_of.get(y, y) == cage_of.get(x, x))
+                       for x in cells_)
+        cache_key = (tuple(terms), target, shared, tuple(to_mask(domains[x]) for x in cells_))
         support = _SUPPORT_CACHE.get(cache_key)
         if support is None:
-            support = _SUPPORT_CACHE[cache_key] = _supported_values(terms, target, domains, cage_of)
+            if len(_SUPPORT_CACHE) >= 100_000:
+                _SUPPORT_CACHE.clear()
+            found = _supported_values(terms, target, domains, cage_of)
+            support = _SUPPORT_CACHE[cache_key] = tuple(to_mask(found[x]) for x in cells_)
     else:
-        support = _bounds_and_parity(terms, target, domains)
-    if any(not support[x] for x, _ in terms):
+        found = _bounds_and_parity(terms, target, domains)
+        support = tuple(to_mask(found[x]) for x in cells_)
+    if not all(support):
         return []  # no assignment fits: leave it for the contradiction checks
     affected = []
-    for (r, c), _ in terms:
+    for (r, c), m in zip(cells_, support):
         if board[r][c]:
             continue
-        gone = candidates[r][c] - support[(r, c)]
+        gone = candidates[r][c] - mask_to_set(m)
         if gone:
             candidates[r][c] -= gone
             affected.append((cell(r, c), sorted(gone)))
@@ -1364,7 +1385,7 @@ def eliminate_innies_outies(candidates, board, cages, log=None, single_step=Fals
     changed = False
     cage_of = {tuple(x): k for k, (_, cls, _) in enumerate(cages) for x in cls}
     for terms, target, why in _sum_constraints(cages)[0]:
-        affected = _prune_by_sum(terms, target, why, candidates, board, cage_of)
+        affected = _prune_by_sum(terms, target, candidates, board, cage_of)
         if affected:
             changed = True
             if log is not None:
@@ -1431,7 +1452,7 @@ def eliminate_large_sums(candidates, board, cages, log=None, single_step=False):
         if not cur:
             continue
         reduced = sorted(cur.items())
-        affected = _prune_by_sum(reduced, target, f"{_expr(reduced)} = {target}", candidates, board, cage_of,
+        affected = _prune_by_sum(reduced, target, candidates, board, cage_of,
                                  exact=len(reduced) <= 5)
         if affected:
             changed = True
@@ -2065,29 +2086,43 @@ def _bits(cells_):
 _CELL_HOUSES = [[h for h, hb in enumerate(_HOUSE_BITS) if hb >> i & 1] for i in range(81)]
 
 
+_COVERS = {}
+
+
 def _covers(spots, n):
-    """Every set of n houses covering all of `spots` (a cell bitmask).
+    """Every set of n (2 or 3) houses covering all of `spots` (a cell bitmask).
 
     The lowest uncovered cell lies in just three houses and one of them must
     be a cover, so branching on those reaches every cover set in at most 3^n
-    paths instead of trying all combinations of the houses touched.
+    paths instead of trying all combinations of the houses touched. Results
+    depend only on the cells, and the explainer asks again at every step, so
+    they are memoised.
     """
+    key = (spots, n)
+    found = _COVERS.get(key)
+    if found is not None:
+        return found
     found = set()
-
-    def grow(left, chosen):
-        if not left:
-            if len(chosen) == n:
-                found.add(tuple(sorted(chosen)))
-            return
-        if len(chosen) == n:
-            return
-        low = (left & -left).bit_length() - 1
-        for h in _CELL_HOUSES[low]:
-            if h not in chosen:
-                grow(left & ~_HOUSE_BITS[h], chosen + [h])
-
-    grow(spots, [])
-    return sorted(found)  # same order as trying combinations of houses
+    hb, ch = _HOUSE_BITS, _CELL_HOUSES
+    for h1 in ch[(spots & -spots).bit_length() - 1]:
+        left1 = spots & ~hb[h1]
+        if not left1:
+            continue
+        for h2 in ch[(left1 & -left1).bit_length() - 1]:
+            left2 = left1 & ~hb[h2]
+            if n == 2:
+                if not left2:
+                    found.add(tuple(sorted((h1, h2))))
+                continue
+            if not left2:
+                continue
+            for h3 in ch[(left2 & -left2).bit_length() - 1]:
+                if not left2 & ~hb[h3]:
+                    found.add(tuple(sorted((h1, h2, h3))))
+    if len(_COVERS) >= 100_000:
+        _COVERS.clear()
+    found = _COVERS[key] = sorted(found)  # same order as trying combinations of houses
+    return found
 
 
 def _cells_of(bits):

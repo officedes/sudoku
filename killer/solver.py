@@ -107,6 +107,28 @@ def required_level(cages):
     return None
 
 
+# Log prefixes of the level-3 and level-4 eliminations in the explained solve
+ADVANCED_STEP_PREFIXES = (
+    "Innies/outies", "Large sum", "Common peers", "Cage pair", "Conflicting combos", "Hidden killer subset",
+    "Naked killer subset", "Leftovers", "House combos", "Killer fish", "ALS-XZ", "Contradiction",
+)
+
+
+def advanced_steps(cages):
+    """How many steps of the explained solve - the one hints walk through - need
+    level-3 techniques or a contradiction sweep.
+
+    A finer measure than the level: the explainer's cage-combination filtering
+    is stronger than the level-2 solver's, so a puzzle the solver rates level 3
+    can still explain itself with no advanced step at all.
+    """
+    import io
+    from contextlib import redirect_stdout
+    with redirect_stdout(io.StringIO()):
+        _, steps = solve_and_explain(cages)
+    return sum(s["type"] == "elimination" and s["text"].startswith(ADVANCED_STEP_PREFIXES) for s in steps)
+
+
 # =============================================================================
 # Detailed elimination steps (for visualizer)
 # =============================================================================

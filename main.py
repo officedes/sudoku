@@ -10,6 +10,7 @@ Usage:
     python main.py --workers 4              Grids tried in parallel
     python main.py --count 10               A set of 10 puzzles
     python main.py --assassin               Shaped like the Assassin series (no givens, cages of 2-5)
+    python main.py --min-advanced 30        At least 30 advanced steps in the explained solve
     python main.py --list                   List saved puzzles
     python main.py --difficulty             Show difficulty of all puzzles
 
@@ -35,6 +36,7 @@ from killer import (
     create_board, populate_board, LEVEL_NAMES,
 )
 from killer.generator import generate_sparse_cages, level_attempt, COLOR_PALETTE
+from killer.solver import advanced_steps
 
 # Grids tried in parallel. Measured on a 15 W laptop chip (2 performance +
 # 8 efficiency cores): 3 workers made puzzles ~3x faster than 6 or 10, which
@@ -253,7 +255,7 @@ def generate_custom_cages(board, min_size=2, max_size=5, big_cage=None):
 
 
 def generate_at_level(min_level, workers, contradictions=0, uncaged=0, big_cages=0, count=1,
-                      assassin=False):
+                      assassin=False, min_advanced=None):
     """Generate `count` puzzles needing technique level `min_level`..4, trying
     several grids in parallel and keeping the first ones that work.
 
@@ -263,7 +265,11 @@ def generate_at_level(min_level, workers, contradictions=0, uncaged=0, big_cages
     that many cages of 7-9 cells. `assassin` shapes them like the Assassin
     series: every cell caged, no one-cell cages (one at most when merging
     gets stuck), cages mostly of 2-5 cells with an occasional 6.
+    `min_advanced` asks for that many advanced steps in the explained solve
+    (default 20 for Assassin-shape level 3, whose median is 31).
     """
+    if min_advanced is None:
+        min_advanced = 20 if assassin and not contradictions and min_level == 3 else 0
     if contradictions:
         min_level, cages = 4, (20, 27)
         target = f"level 4, stuck {contradictions}+ times (first-order contradiction sweeps)"
@@ -276,11 +282,13 @@ def generate_at_level(min_level, workers, contradictions=0, uncaged=0, big_cages
         target += f", {big_cages}+ cage{'s' if big_cages != 1 else ''} of 7-9 cells"
     if assassin:
         target += ", Assassin shape"
+    if min_advanced:
+        target += f", {min_advanced}+ advanced steps"
     print(f"Generating: {target}, {workers} grids in parallel")
     # Exactly the asked level: solvable there, not one below (level 4 when
     # asking for contradiction sweeps)
     job = dict(min_level=min_level, max_level=4 if contradictions else min_level, cages=cages,
-               min_contradictions=contradictions,
+               min_contradictions=contradictions, min_advanced=min_advanced,
                uncaged=uncaged, big_cages=big_cages)
     if assassin:
         # Measured on the 180 Assassins: 25-27 cages (fewer when they need
@@ -296,7 +304,8 @@ def generate_at_level(min_level, workers, contradictions=0, uncaged=0, big_cages
             cages, solution = result
             made += 1
             sizes = sorted(len(c[1]) for c in cages)
-            print(f"[{made}/{count}] {time.time() - start:.1f}s: {len(cages)} cages, sizes {sizes}")
+            print(f"[{made}/{count}] {time.time() - start:.1f}s: {len(cages)} cages, sizes {sizes},"
+                  f" {advanced_steps(cages)} advanced steps")
             if count == 1:
                 print_board_colored(solution, cages)
             save_puzzle(cages, solution)
@@ -338,6 +347,8 @@ def main():
     gen.add_argument("--uncaged", type=int, default=0, help="Leave N cells in no cage")
     gen.add_argument("--big-cages", type=int, default=0, help="At least N cages of 7-9 cells")
     gen.add_argument("--count", type=int, default=1, help="Generate a set of N puzzles")
+    gen.add_argument("--min-advanced", type=int, default=None,
+                     help="At least N advanced steps in the explained solve (default 20 with --assassin at level 3)")
     gen.add_argument("--assassin", action="store_true",
                      help="Shape like the Assassin series: no one-cell cages, cages of 2-5 (rarely 6)")
     gen.add_argument("--classic", action="store_true",
@@ -361,6 +372,7 @@ def main():
     parser.add_argument("--big-cages", type=int, default=0)
     parser.add_argument("--count", type=int, default=1)
     parser.add_argument("--assassin", action="store_true")
+    parser.add_argument("--min-advanced", type=int, default=None)
     parser.add_argument("--classic", action="store_true")
 
     args = parser.parse_args()
@@ -386,7 +398,7 @@ def main():
     # Generation
     if not args.classic:
         generate_at_level(args.level, args.workers, args.contradictions, args.uncaged, args.big_cages,
-                          args.count, args.assassin)
+                          args.count, args.assassin, args.min_advanced)
         return
 
     min_sz, max_sz = args.min_size, args.max_size

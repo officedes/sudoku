@@ -258,7 +258,8 @@ def play_mode(cages, solution):
     COMBO_Y = TOP_H + 4
     COMBO_H = 62
     LIST_ROWS = 4  # rows of the chevron list on screen at once; the wheel scrolls the rest
-    GRID_OFFSET_Y = COMBO_Y + COMBO_H + 6
+    LABEL_H = 16  # column letters above the grid; row numbers sit in the left margin
+    GRID_OFFSET_Y = COMBO_Y + COMBO_H + 6 + LABEL_H
     MSG_Y = GRID_OFFSET_Y + GRID_SIZE + 8
     TOOLS_Y = MSG_Y + 26
     PAD_Y = TOOLS_Y + 44
@@ -1104,6 +1105,17 @@ def play_mode(cages, solution):
             cell_bg[(sr, sc)] = T["selected"]
 
         draw_grid_lines(screen, GRID_OFFSET_X, GRID_OFFSET_Y, CELL_SIZE)
+        # Coordinates, so cell names in hints (F4 = column F, row 4) can be found;
+        # the rows and columns of the selection and of the hinted cells are lit
+        lit = set(selected) | set(hint_panel["cells"] if hint_panel else [])
+        sel_rows, sel_cols = {r for r, _ in lit}, {c for _, c in lit}
+        for i in range(9):
+            t = font_cage_sum.render(_COL[i], True, T["hl"] if i in sel_cols else T["muted"])
+            screen.blit(t, (GRID_OFFSET_X + i * CELL_SIZE + (CELL_SIZE - t.get_width()) // 2,
+                            GRID_OFFSET_Y - LABEL_H + (LABEL_H - t.get_height()) // 2 - 1))
+            t = font_cage_sum.render(str(i + 1), True, T["hl"] if i in sel_rows else T["muted"])
+            screen.blit(t, ((GRID_OFFSET_X - t.get_width()) // 2,
+                            GRID_OFFSET_Y + i * CELL_SIZE + (CELL_SIZE - t.get_height()) // 2))
         draw_cages(screen, cages, cell_bg, font_cage_sum, GRID_OFFSET_X, GRID_OFFSET_Y, CELL_SIZE)
         # Digits and pencil marks
         for r in range(9):

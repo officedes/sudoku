@@ -20,7 +20,7 @@ import visualizer  # noqa: E402
 from main import load_puzzle  # noqa: E402
 
 CELL, GX = 60, 20
-GY = 44 + 4 + 62 + 6
+GY = 44 + 4 + 62 + 6 + 16  # below the column letters
 TOOLS_Y = GY + 540 + 8 + 26
 PAD_Y = TOOLS_Y + 44
 KEY_H = 46

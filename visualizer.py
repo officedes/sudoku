@@ -1145,13 +1145,29 @@ def play_mode(cages, solution):
                 lines = ["Select a cell to see its cage's combinations",
                          "Click a combination to rule it out"]
             elif len(sel_areas) > 1:
-                # A cage counts in full only when all of it is selected; from a
-                # partly selected one just its placed digits in the selection count
-                full = [a for a in sel_areas if {tuple(x) for x in a[2]} <= selected]
-                in_full = {tuple(x) for a in full for x in a[2]}
-                rest = [cl for cl in selected if cl not in in_full]
-                total = sum(a[1] for a in full) + sum(board[r][c] for r, c in rest)
-                open_cells = sum(1 for r, c in rest if not board[r][c])
+                # A fully selected cage counts its sum. A partly selected one
+                # counts its sum minus the cells left out when all of those are
+                # known (placed, or a single pencil mark); otherwise just the
+                # digits placed in the selection, and its empty cells stay open
+                def known(r, c):
+                    if board[r][c]:
+                        return board[r][c]
+                    return next(iter(pencil[r][c])) if len(pencil[r][c]) == 1 else None
+
+                total, open_cells = 0, 0
+                for _, cs, ccls, _ in sel_areas:
+                    cells_a = {tuple(x) for x in ccls}
+                    left_out = [known(r, c) for r, c in cells_a - selected]
+                    if None not in left_out:
+                        total += cs - sum(left_out)
+                    else:
+                        part = cells_a & selected
+                        total += sum(board[r][c] for r, c in part)
+                        open_cells += sum(1 for r, c in part if not board[r][c])
+                for r, c in selected:
+                    if (r, c) not in cell_cage_map:  # uncaged cells
+                        total += board[r][c]
+                        open_cells += not board[r][c]
                 line = f"{len(sel_areas)} cages selected, total {total}"
                 if open_cells:
                     line += f" + {open_cells} open cell{'s' if open_cells != 1 else ''}"

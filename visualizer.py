@@ -278,7 +278,23 @@ def play_mode(cages, solution, save_path=None):
 
     T = THEME
 
-    screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
+    # Everything is drawn at the design size on `screen`; when the desktop is
+    # shorter than that (1920x1200 at 125% leaves 912 px) the window shows it
+    # scaled down, and mouse positions are scaled back. Headless tests (the
+    # dummy driver) drive design coordinates, so they never scale.
+    scale = 1.0
+    if pygame.display.get_driver() != "dummy":
+        desk_w, desk_h = pygame.display.get_desktop_sizes()[0]
+        # Windows 11's taskbar (48) and a title bar (~32) share the desktop height
+        scale = min(1.0, (desk_h - 48 - 32 - 8) / WINDOW_H)
+        if scale < 1.0:
+            # Centred on the whole desktop the bottom would slide under the taskbar
+            os.environ["SDL_VIDEO_WINDOW_POS"] = f"{(desk_w - round(WINDOW_W * scale)) // 2},32"
+    window = pygame.display.set_mode((round(WINDOW_W * scale), round(WINDOW_H * scale)))
+    screen = window if scale == 1.0 else pygame.Surface((WINDOW_W, WINDOW_H))
+
+    def to_design(pos):
+        return (round(pos[0] / scale), round(pos[1] / scale)) if scale != 1.0 else pos
     pygame.display.set_caption("Killer Sudoku — Play Mode")
 
     font_num = pygame.font.SysFont("segoeui", 30, bold=True)
@@ -675,14 +691,14 @@ def play_mode(cages, solution, save_path=None):
                 hint_panel = None  # the click or key only closes the hint
 
             elif event.type == pygame.MOUSEWHEEL:
-                if marks_open and marks_panel_rect is not None and marks_panel_rect.collidepoint(pygame.mouse.get_pos()):
+                if marks_open and marks_panel_rect is not None and marks_panel_rect.collidepoint(to_design(pygame.mouse.get_pos())):
                     marks_scroll -= event.y
 
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button in (4, 5):
                 pass  # the wheel, handled as MOUSEWHEEL
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                mx, my = event.pos
+                mx, my = to_design(event.pos)
                 gr = (my - GRID_OFFSET_Y) // CELL_SIZE
                 gc = (mx - GRID_OFFSET_X) // CELL_SIZE
                 in_panel = marks_open and marks_panel_rect is not None and marks_panel_rect.collidepoint(mx, my)
@@ -867,7 +883,7 @@ def play_mode(cages, solution, save_path=None):
                         selected_mark = None
 
             elif event.type == pygame.MOUSEMOTION and pygame.mouse.get_pressed()[0]:
-                mx, my = event.pos
+                mx, my = to_design(event.pos)
                 gr = (my - GRID_OFFSET_Y) // CELL_SIZE
                 gc = (mx - GRID_OFFSET_X) // CELL_SIZE
                 if (0 <= gr < 9 and 0 <= gc < 9
@@ -1090,7 +1106,7 @@ def play_mode(cages, solution, save_path=None):
         combo_click_rects = []  # rebuilt each frame
         pad_rects = []
         screen.fill(T["bg"])
-        mouse = pygame.mouse.get_pos()
+        mouse = to_design(pygame.mouse.get_pos())
 
         # Compute invalid (red) and must-have (green) pencil digits per cell.
         # Red:   digits not in ANY active cage combo (including pencil-filtered ones)
@@ -1495,6 +1511,8 @@ def play_mode(cages, solution, save_path=None):
                 draw_tooltip(screen, tip_lines, bold_rows, (mx, my), (font_tooltip, font_tooltip_bold),
                              (WINDOW_W, WINDOW_H))
 
+        if screen is not window:
+            pygame.transform.smoothscale(screen, window.get_size(), window)
         pygame.display.flip()
         clock.tick(60)
 

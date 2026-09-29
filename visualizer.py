@@ -15,6 +15,7 @@ Play controls:
 """
 
 import json
+import re
 import pygame
 import os
 import sys
@@ -27,6 +28,7 @@ from killer import (
     get_possible_values, get_cage_candidates, solve_and_explain as _solve_and_explain,
     COL_LETTERS as _COL, can_assign_combo, digit_combos,
 )
+from killer.helpers import get_house_cells
 from main import load_puzzle, PUZZLES_DIR
 
 SAVES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saves")
@@ -74,6 +76,256 @@ def _cage_combos(board, cage_sum, cells, candidates=None, excluded=None, exclude
                 continue
         result.append(sorted(combo))
     return result
+
+
+
+# --- Hint wording: a solver step in plain words, plus the cells its reasoning uses ---
+
+_CELL_TERM = re.compile(r"([+-]?)(?:(\d+)\*)?([A-I][1-9])")
+
+
+def _nm(r, c):
+    return f"{_COL[c]}{r + 1}"
+
+
+def _rc(name):
+    return int(name[1:]) - 1, _COL.index(name[0])
+
+
+def _list(items, last="and"):
+    items = [str(x) for x in items]
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} {last} {items[-1]}"
+
+
+def _house(name):
+    """'row 4', 'column 7', 'col 7' or 'box 5' -> its cells."""
+    kind, n = name.split()
+    return get_house_cells({"row": "row", "column": "col", "col": "col", "box": "box"}[kind], int(n) - 1)
+
+
+def _sum_expr(terms):
+    out = ""
+    for (r, c), k in terms:
+        name = _nm(r, c) if abs(k) == 1 else f"{abs(k)}×{_nm(r, c)}"
+        out += (" − " if k < 0 else " + ") + name if out else ("−" if k < 0 else "") + name
+    return out
+
+
+def _why_not(ways, cells, vals):
+    """Why none of the digit sets `ways` fits the `cells` (name -> digits each can take):
+    a digit no cell can take, or a cell that can take none of the set."""
+    out = []
+    for co in ways[:4]:
+        label = "{" + ",".join(map(str, co)) + "}"
+        nowhere = next((v for v in co if not any(v in vals[n] for n in cells)), None)
+        stuck = next((n for n in cells if not set(co) & set(vals[n])), None)
+        if nowhere is not None:
+            out.append(f"{label} ({_list(cells, 'or')} can't take its {nowhere})")
+        elif stuck is not None:
+            out.append(f"{label} ({stuck} can't be any of {_list(co, 'or')})")
+        else:
+            out.append(f"{label} (its digits can't be spread over {_list(cells)})")
+    more = f", plus {len(ways) - 4} more like them" if len(ways) > 4 else ""
+    return _list(out) + more
+
+
+def _cage_hint(cs, ccls, lost, cands, board, before=None):
+    """A cage's combinations after the candidates left in it, and why each lost digit goes.
+    `before` fills in cells the after-step snapshot leaves out."""
+    names = [_nm(r, c) for r, c in ccls]
+    left = {n: cands.get(n) or (before or {}).get(n) or list(range(1, 10))
+            for (r, c), n in zip(ccls, names) if board[r][c] == 0}
+    fits = ", ".join("{" + ",".join(map(str, co)) + "}" for co in _cage_combos(board, cs, ccls, candidates=left))
+    rem = cs - sum(board[r][c] for r, c in ccls)
+    title = f"Cage {cs} [{', '.join(names)}]: only {fits} still fit"
+    lines = [f"Cage {cs} covers {_list(names)}. With the digits its empty cells can still take, only "
+             f"{fits} add up to {rem}{f' (the cage {cs} minus its placed digits)' if rem != cs else ''}."]
+    for r, c, d in sorted(lost):
+        n = _nm(r, c)
+        others = [x for x in left if x != n]
+        if len(others) == 1:
+            o, need = others[0], rem - d
+            why = (f"{n} = {d} would need {o} = {need}, which isn't a digit" if not 1 <= need <= 9
+                   else f"{n} = {d} would need {o} = {need} too, and a cage can't repeat a digit" if need == d
+                   else f"{n} = {d} would need {o} = {need}, but {o} can't be {need}")
+        else:
+            placed = {board[r][c] for r, c in ccls if board[r][c]}
+            ways = digit_combos(len(others), rem - d, frozenset(placed | {d}))
+            if not ways:
+                why = f"{n} = {d} would leave {rem - d} for {len(others)} different digits, which can't be done"
+            else:
+                why = (f"{n} = {d} would leave {rem - d} for {_list(others)}, which needs "
+                       f"{_why_not(ways, others, {o: [v for v in left[o] if v != d] for o in others})}")
+        lines.append(f"{why}, so {n} loses {d}.")
+    return title, lines
+
+
+def _sum_reason(terms, target, cands, board, differ, x, d):
+    """Why cell x can't be d when sum(k * cell) == target: what the other cells would need."""
+    kx = dict(terms)[x]
+    rest = [(y, k) for y, k in terms if y != x]
+    need = target - kx * d
+    lo = hi = 0
+    for (r, c), k in rest:
+        vals = [board[r][c]] if board[r][c] else [v for v in cands.get(_nm(r, c), []) if not (differ(x, (r, c)) and v == d)]
+        if not vals:
+            return f"{_nm(*x)} = {d} would leave {_nm(r, c)} with no digit it can take"
+        lo += min(k * v for v in vals)
+        hi += max(k * v for v in vals)
+    lead = f"{_nm(*x)} = {d} would leave {_sum_expr(rest)} = {need}"
+    if need < lo:
+        return f"{lead}, but the least those cells can make is {lo}"
+    if need > hi:
+        return f"{lead}, but the most those cells can make is {hi}"
+    ys = [y for y, _ in rest]
+    if all(k == 1 for _, k in rest) and all(differ(a, b) for i, a in enumerate(ys) for b in ys[i + 1:]) \
+            and all(differ(x, y) for y in ys) and not any(board[r][c] for r, c in ys):
+        # All different digits, none of them d: name the sets that would do and what stops each
+        vals = {_nm(*y): [v for v in cands.get(_nm(*y), []) if v != d] for y in ys}
+        ways = digit_combos(len(ys), need, frozenset({d}))
+        if not ways:
+            return f"{lead}, which {len(ys)} different digits (none of them {d}) can't make"
+        some = "way with different digits is" if len(ways) == 1 else "ways with different digits are"
+        return f"{lead}; the only {some} {_why_not(ways, list(vals), vals)}"
+    digits = "; ".join(f"{_nm(*y)} {'/'.join(map(str, cands.get(_nm(*y), [])))}" for y in ys)
+    return (f"{lead}, which no mix of the digits they can still take makes ({digits}; cells sharing a row,"
+            f" column, box or cage must differ)")
+
+
+def explain_step(text, removed, cands, after, board, cages):
+    """(title, lines, reason cells) in plain words for an elimination step of the
+    explained solve, from the candidates before it (`cands`) and after it
+    (`after`); None when the step's own wording has to do."""
+    cage_of = {tuple(x): i for i, (_, cls, _) in enumerate(cages) for x in cls}
+
+    def differ(a, b):
+        return (a[0] == b[0] or a[1] == b[1] or (a[0] // 3 == b[0] // 3 and a[1] // 3 == b[1] // 3)
+                or cage_of.get(a, a) == cage_of.get(b, b))
+
+    gone = {}
+    for r, c, d in removed:
+        gone.setdefault(d, []).append(_nm(r, c))
+
+    m = re.match(r"Naked (\w+) in (.+?): \[(.*?)\] = \[(.*?)\]", text)
+    if m:
+        kind, house, cl, ds = m.groups()
+        cl, ds = cl.split(", "), ds.split(", ")
+        return (f"Naked {kind.lower()} in {house}: {_list(cl)} hold {_list(ds)}",
+                [f"{_list(cl)} can only be {_list(ds, 'or')}: {len(cl)} cells sharing just {len(ds)} digits, so"
+                 f" between them they use each of {_list(ds)} exactly once.",
+                 f"That leaves no {_list(ds, 'or')} for any other cell of {house}."],
+                [_rc(n) for n in cl])
+
+    m = re.match(r"(Hidden \w+) in (.+?): \{(.*?)\} only in \[(.*?)\]", text)
+    if m:
+        kind, house, ds, cl = m.groups()
+        cl = cl.split(", ")
+        return (f"{kind} in {house}: {ds} only in {_list(cl)}",
+                [f"In {house}, {ds.replace(',', ', ')} can only go in {_list(cl)}. {len(cl)} digits for"
+                 f" {len(cl)} cells: those cells hold exactly these digits, so every other digit leaves them."],
+                [_rc(n) for n in cl])
+
+    m = re.match(r"Pointing: (\d) in box (\d) only in (row|col) (\d)", text)
+    if m:
+        d, box, kind, line = int(m[1]), m[2], m[3], m[4]
+        line_name = f"{'row' if kind == 'row' else 'column'} {line}"
+        spots = [(r, c) for r, c in _house(f"box {box}") if d in cands.get(_nm(r, c), [])]
+        return (f"Pointing: box {box}'s {d} is in {line_name}",
+                [f"In box {box}, {d} can only go in {_list([_nm(*x) for x in spots], 'or')}, all in {line_name}.",
+                 f"Whichever it is, {line_name} gets its {d} from box {box}, so no other cell of {line_name}"
+                 f" can be {d}."],
+                spots)
+
+    m = re.match(r"Box-line: (\d) in (.+?) only in box (\d)", text)
+    if m:
+        d, house, box = int(m[1]), m[2], m[3]
+        spots = [(r, c) for r, c in _house(house) if d in cands.get(_nm(r, c), [])]
+        return (f"Box-line: {house}'s {d} is in box {box}",
+                [f"In {house}, {d} can only go in {_list([_nm(*x) for x in spots], 'or')}, all inside box {box}.",
+                 f"So box {box}'s {d} is one of them, and no other cell of box {box} can be {d}."],
+                spots)
+
+    m = re.match(r"Innies/outies: (.+) -> removed", text)
+    if m:
+        region, eq = m[1].rsplit(": ", 1)
+        expr, target = eq.rsplit(" = ", 1)
+        terms = [(_rc(n), (-1 if sign == "-" else 1) * int(k or 1)) for sign, k, n in _CELL_TERM.findall(expr)]
+        target = int(target)
+        if all(k < 0 for _, k in terms):
+            terms, target = [(x, -k) for x, k in terms], -target
+        ins = [x for x, k in terms if k > 0]
+        outs = [x for x, k in terms if k < 0]
+        m2 = re.fullmatch(r"(rows|columns|boxes) (\d)-(\d)", region)
+        count = int(m2[3]) - int(m2[2]) + 1 if m2 else 1 if re.fullmatch(r"(row|column|box) \d", region) else None
+        total = (f"{region} {'have' if count > 1 else 'has'} a known total ({45 * count})" if count
+                 else f"{region} has a known total")
+        if not outs:
+            how = (f"Every row, column and box adds up to 45, so {total}. Take away the cages"
+                   f" lying completely inside it: the cells left over ({_list([_nm(*x) for x in ins])}) must"
+                   f" make up the rest.")
+        elif not ins:
+            how = f"Every row, column and box adds up to 45, so {total}."
+        else:
+            how = (f"Every row, column and box adds up to 45, so {total}. Its cages that"
+                   f" stick out reach cells outside it ({_list([_nm(*x) for x in outs])}); comparing their sums"
+                   f" with the region's total links those cells to the ones inside"
+                   f" ({_list([_nm(*x) for x in ins])}).")
+        lines = [how, f"So {_sum_expr(terms)} = {target}."]
+        lines += [f"{_sum_reason(terms, target, cands, board, differ, (r, c), d)}, so {_nm(r, c)} loses {d}."
+                  for r, c, d in sorted(removed)]
+        return f"Innies/outies ({region}): {_sum_expr(terms)} = {target}", lines, [x for x, _ in terms]
+
+    m = re.match(r"Common peers: (.+), only in \[(.*?)\]", text)
+    if m:
+        why, cl = m[1], m[2].split(", ")
+        d = sorted(gone)[0] if gone else "it"
+        return (f"Common peers: {why}",
+                [f"{why[0].upper()}{why[1:]}, and it can only be in {_list(cl, 'or')}.",
+                 f"Any cell that shares a row, column, box or cage with all of {_list(cl)} would clash with it,"
+                 f" so it can't be {d}."],
+                [_rc(n) for n in cl])
+
+    m = re.match(r"Cage claiming: (\d) must be in cage sum=(\d+) \[(.*?)\] \(in all combos\) -> .* in (.+)$", text)
+    if m:
+        d, cs, cl, house = m[1], m[2], m[3].split(", "), m[4]
+        return (f"Cage claiming: cage {cs} holds the {d} of {house}",
+                [f"Every combination cage {cs} ({_list(cl)}) can still take includes {d}, so the cage holds {'an' if d == '8' else 'a'} {d}.",
+                 f"The cage lies inside {house}, so that is {house}'s {d}: no other cell of {house} can be {d}."],
+                [_rc(n) for n in cl])
+
+    m = re.match(r"Cage-(pointing|box): (\d) must be in cage sum=(\d+) \[(.*?)\], only in (.+?) -> ", text)
+    if m:
+        d, cs, cl, where = m[2], m[3], m[4].split(", "), m[5].replace("col ", "column ")
+        spots = [_rc(n) for n in cl if int(d) in cands.get(n, [])]
+        return (f"Cage {cs}'s {d} is in {where}",
+                [f"Every combination cage {cs} can still take includes {d}, so the cage holds {'an' if d == '8' else 'a'} {d}; within the"
+                 f" cage it can only go in {_list([_nm(*x) for x in spots], 'or')}, all in {where}.",
+                 f"Whichever it is, it is {where}'s {d}, so no other cell of {where} can be {d}."],
+                spots)
+
+    m = re.match(r"Cage interaction in (.+?): cage sum=(\d+) can't be (.+?) \(would block other cages\)"
+                 r" -> kept (.+?), removed", text)
+    if m:
+        house, cs, bad, kept = m.groups()
+        return (f"Cage {cs} in {house} can't be {bad}",
+                [f"In {house}, cage {cs} as {bad} would use digits that another cage of {house} needs for every"
+                 f" one of its combinations, leaving it no way to add up.",
+                 f"So cage {cs} keeps only {kept}, and its cells lose the digits only {bad} used."],
+                [])
+
+    m = re.match(r"Cage sum=(\d+) \[(.*?)\]:", text)
+    if m:
+        ccls = [_rc(n) for n in m[2].split(", ")]
+        title, lines = _cage_hint(int(m[1]), ccls, removed, after, board, cands)
+        return title, lines, ccls
+    return None
+
+
+def _changes_line(removed):
+    by_digit = {}
+    for r, c, d in removed:
+        by_digit.setdefault(d, []).append(_nm(r, c))
+    return "Removes " + "; ".join(f"{d} from {_list(sorted(ns))}" for d, ns in sorted(by_digit.items())) + "."
 
 
 def load_and_solve(filename):
@@ -492,11 +744,26 @@ def play_mode(cages, solution, save_path=None):
             lines = [ln for ln in s.get("explanation", "").splitlines() if ln.strip()]
             if s["type"] == "placement":
                 r, c = s["cell"]
+                v = s["value"]
                 if s["text"] not in hinted_steps:  # asking again for the same placement is free
                     hinted_steps.add(s["text"])
                     hints_used += 1
-                hint_panel = {"cells": [(r, c)], "title": s["text"],
-                              "lines": lines + [f"Place {s['value']} in {_COL[c]}{r+1} yourself when you're ready."]}
+                reason = []
+                m = re.search(r"hidden single in (.+?)\)", s["text"])
+                if m:
+                    house = m[1]
+                    reason = [x for x in _house(house) if x != (r, c) and not start[x[0]][x[1]]]
+                    lines = [f"In {house}, every other empty cell ({_list([_nm(*x) for x in reason])}) has"
+                             f" lost {v} as a candidate, so {v} can only go in {_nm(r, c)}."]
+                elif "candidate elimination" in s["text"]:
+                    lines = [f"Every digit but {v} has been ruled out of {_nm(r, c)}."]
+                elif "Rule of 45" in s["text"]:
+                    house = re.search(r"Rule of 45 \((.+?)\)", s["text"])[1]
+                    reason = [x for x in _house(house) if x != (r, c)]
+                elif "cage deduction" in s["text"]:
+                    reason = [tuple(x) for x in cages[cell_cage_map[(r, c)]][1] if tuple(x) != (r, c)]
+                hint_panel = {"cells": [(r, c)], "reason": reason, "removals": [], "title": s["text"],
+                              "lines": [f"Place {v} in {_nm(r, c)} yourself when you're ready."] + lines}
                 return f"Hint: {s['text']}"
             if s["type"] == "elimination" and prev is not None and now is not None:
                 removed = [(int(k[1:]) - 1, _COL.index(k[0]), d)
@@ -521,32 +788,17 @@ def play_mode(cages, solution, save_path=None):
                     if batch:
                         history.append(("batch", batch))
                     hints_used += 1
-                    title, shown = s["text"], sorted({(r, c) for r, c, _ in part})
+                    title, reason = s["text"], []
                     if key is not None:
-                        cs, ccls, _ = cages[key]
-                        ccls = [tuple(x) for x in ccls]
-                        names = [f"{_COL[c]}{r+1}" for r, c in ccls]
-                        left = {n: now.get(n, []) for (r, c), n in zip(ccls, names) if start[r][c] == 0}
-                        fits = ", ".join("{" + ",".join(map(str, co)) + "}"
-                                         for co in _cage_combos(start, cs, ccls, candidates=left))
-                        rem = cs - sum(start[r][c] for r, c in ccls)
-                        title = f"Cage {cs} [{', '.join(names)}]: only {fits} still fit"
-                        lines = [f"With the digits its empty cells can still take, only {fits} add up to {rem}"
-                                 f"{f' (the cage {cs} minus its placed digits)' if rem != cs else ''}."]
-                        for r, c, d in sorted(part):
-                            n = f"{_COL[c]}{r+1}"
-                            others = [x for x in left if x != n]
-                            if len(others) == 1:
-                                o, need = others[0], rem - d
-                                why = (f"{n} = {d} would need {o} = {need}, which isn't a digit" if not 1 <= need <= 9
-                                       else f"{n} = {d} would need {o} = {need} too" if need == d
-                                       else f"{n} = {d} would need {o} = {need}, but {o} can't be {need}")
-                            else:
-                                why = (f"with {n} = {d}, the other cells can't make up the remaining {rem - d}"
-                                       f" from the digits they can still take")
-                            lines.append(f"{why}, so {n} loses {d}.")
-                        shown = ccls
-                    hint_panel = {"cells": shown, "title": title, "lines": lines}
+                        ccls = [tuple(x) for x in cages[key][1]]
+                        title, lines = _cage_hint(cages[key][0], ccls, part, now, start, prev)
+                        reason = ccls
+                    else:
+                        plain = explain_step(s["text"], part, prev, now, start, cages)
+                        if plain:
+                            title, lines, reason = plain
+                    hint_panel = {"cells": sorted({(r, c) for r, c, _ in part}), "reason": reason,
+                                  "removals": part, "title": title, "lines": [_changes_line(part)] + lines}
                     return f"Hint: {title}"
             if now is not None:
                 prev = now
@@ -1469,9 +1721,19 @@ def play_mode(cages, solution, save_path=None):
 
         # --- Hint explanation panel over the bottom area ---
         if hint_panel:
+            for hr, hc in hint_panel.get("reason", []):
+                x, y = cell_xy(hr, hc)
+                pygame.draw.rect(screen, T["box"], (x + 5, y + 5, CELL_SIZE - 10, CELL_SIZE - 10), 2, border_radius=6)
             for hr, hc in hint_panel["cells"]:
                 x, y = cell_xy(hr, hc)
                 pygame.draw.rect(screen, T["hl"], (x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4), 3, border_radius=8)
+            sub = (CELL_SIZE - 16) / 3  # same spots as the pencil marks
+            for hr, hc, d in hint_panel.get("removals", []):
+                x, y = cell_xy(hr, hc)
+                cx, cy = x + 8 + ((d - 1) % 3 + 0.5) * sub, y + 13 + ((d - 1) // 3 + 0.5) * sub
+                t = font_pencil_bold.render(str(d), True, T["digit_bad"])
+                screen.blit(t, (cx - t.get_width() / 2, cy - t.get_height() / 2))
+                pygame.draw.line(screen, T["digit_bad"], (cx - 6, cy + 5), (cx + 6, cy - 5), 2)
             panel = pygame.Rect(GRID_OFFSET_X - 8, MSG_Y - 4, GRID_SIZE + 16, WINDOW_H - MSG_Y - 4)
             pygame.draw.rect(screen, T["tip"], panel, border_radius=10)
             pygame.draw.rect(screen, T["hl"], panel, 1, border_radius=10)

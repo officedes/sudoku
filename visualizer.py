@@ -1520,7 +1520,20 @@ def play_mode(cages, solution, save_path=None):
     pygame.quit()
 
 
+def _dpi_aware():
+    """Draw in real screen pixels on Windows. Without this, a 125% display
+    stretches the window as a bitmap and the text goes soft."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per monitor
+    except (AttributeError, OSError):
+        ctypes.windll.user32.SetProcessDPIAware()
+
+
 def main():
+    _dpi_aware()
     # Pick puzzle file
     filename = "example.json"
     print_mode = "--print" in sys.argv

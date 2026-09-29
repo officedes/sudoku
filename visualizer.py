@@ -257,6 +257,7 @@ def play_mode(cages, solution):
     TOP_H = 44
     COMBO_Y = TOP_H + 4
     COMBO_H = 62
+    LIST_ROWS = 4  # rows of the chevron list on screen at once; the wheel scrolls the rest
     GRID_OFFSET_Y = COMBO_Y + COMBO_H + 6
     MSG_Y = GRID_OFFSET_Y + GRID_SIZE + 8
     TOOLS_Y = MSG_Y + 26
@@ -309,6 +310,9 @@ def play_mode(cages, solution):
     marks_open = False  # the list of the player's marks, opened from the combination bar
     marks_toggle_rect = marks_panel_rect = None  # drawn each frame, clicked on the next
     mark_trash_rects = []  # (pygame.Rect, mark index)
+    mark_row_rects = []  # (pygame.Rect, ("cage" | "mark", index)): click a row to show just it in the bar
+    marks_scroll = 0  # first list row on screen; the wheel scrolls it
+    bar_pick = None  # (cage index, the selection it was picked for): a cage picked from the list
     marking_sum = None  # when not None, we're typing a sum for a new mark
     marking_input = ""  # string being typed for sum
     highlight_digit = None  # 1-9 to highlight all cells containing this digit
@@ -602,6 +606,13 @@ def play_mode(cages, solution):
             elif hint_panel and event.type in (pygame.MOUSEBUTTONDOWN, pygame.KEYDOWN):
                 hint_panel = None  # the click or key only closes the hint
 
+            elif event.type == pygame.MOUSEWHEEL:
+                if marks_open and marks_panel_rect is not None and marks_panel_rect.collidepoint(pygame.mouse.get_pos()):
+                    marks_scroll -= event.y
+
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button in (4, 5):
+                pass  # the wheel, handled as MOUSEWHEEL
+
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = event.pos
                 gr = (my - GRID_OFFSET_Y) // CELL_SIZE
@@ -656,6 +667,7 @@ def play_mode(cages, solution):
                     if marks_toggle_rect is not None and marks_toggle_rect.collidepoint(mx, my):
                         hit_something = True
                         marks_open = not marks_open
+                        marks_scroll = 0
                     for rect, mi in mark_trash_rects:
                         if rect.collidepoint(mx, my) and mi < len(user_cages):
                             delete_mark(mi)
@@ -664,6 +676,18 @@ def play_mode(cages, solution):
                             message = "Mark deleted"
                             msg_color = (60, 60, 80)
                             break
+                    # A click on a list row outside its chips and bin shows just that
+                    # cage or mark in the combination bar, and closes the list
+                    if in_panel and not any(r.collidepoint(mx, my) for r, _ in mark_trash_rects) \
+                            and not any(r.collidepoint(mx, my) for r, _, _ in combo_click_rects):
+                        for rect, (kind, idx) in mark_row_rects:
+                            if rect.collidepoint(mx, my):
+                                if kind == "mark":
+                                    selected_mark, bar_pick = idx, None
+                                else:
+                                    selected_mark, bar_pick = None, (idx, frozenset(selected))
+                                marks_open = False
+                                break
                     # Keypad: hand the digit to the key handler, forcing place or pencil;
                     # with nothing selected the key handler toggles the digit highlight,
                     # which also finds digits that only exist as pencil marks
@@ -1121,10 +1145,12 @@ def play_mode(cages, solution):
         # (a mark can cover them), then the marks
         panel_rows = ([("cage", ci) for ci in sorted({cell_cage_map[cl] for cl in selected if cl in cell_cage_map})]
                       + [("mark", mi) for mi in visible_marks])
+        marks_scroll = max(0, min(marks_scroll, len(panel_rows) - LIST_ROWS))
+        list_rows = panel_rows[marks_scroll:marks_scroll + LIST_ROWS]
         hovered_row = None
         if marks_open and marks_panel_rect is not None and marks_panel_rect.collidepoint(mouse):
             row = (mouse[1] - marks_panel_rect.y - 6) // 40
-            hovered_row = panel_rows[row] if 0 <= row < len(panel_rows) else None
+            hovered_row = list_rows[row] if 0 <= row < len(list_rows) else None
         for mi, uc in enumerate(user_cages):
             if mi not in visible_marks or hovered_row not in (None, ("mark", mi)):
                 continue
@@ -1157,6 +1183,9 @@ def play_mode(cages, solution):
         if selected_mark is not None and selected_mark < len(user_cages):
             uc = user_cages[selected_mark]
             sel_areas = [(mark_key(uc), uc["sum"], uc["cells"], uc["distinct"])]
+        elif bar_pick is not None and bar_pick[1] == frozenset(selected):
+            ci = bar_pick[0]
+            sel_areas = [(ci, cages[ci][0], cages[ci][1], True)]
         else:
             sel_areas = [(ci, cages[ci][0], cages[ci][1], True)
                          for ci in sorted({cell_cage_map[cl] for cl in selected if cl in cell_cage_map})]
@@ -1223,14 +1252,27 @@ def play_mode(cages, solution):
         # --- The list: one row per cage or mark, "sum = [chips]", and a bin on marks ---
         marks_panel_rect = None
         mark_trash_rects = []
+        mark_row_rects = []
         if marks_open and visible_marks:
             row_h = 40
-            marks_panel_rect = pygame.Rect(GRID_OFFSET_X - 4, COMBO_Y + 36, GRID_SIZE + 8, 12 + row_h * len(panel_rows))
+            marks_panel_rect = pygame.Rect(GRID_OFFSET_X - 4, COMBO_Y + 36, GRID_SIZE + 8, 12 + row_h * len(list_rows))
             pygame.draw.rect(screen, T["panel"], marks_panel_rect, border_radius=12)
             pygame.draw.rect(screen, T["key_edge"], marks_panel_rect, 1, border_radius=12)
-            for row, (kind, idx) in enumerate(panel_rows):
+            if len(panel_rows) > LIST_ROWS:
+                track = pygame.Rect(marks_panel_rect.right - 7, marks_panel_rect.y + 8, 3, marks_panel_rect.h - 16)
+                thumb_h = max(12, track.h * LIST_ROWS // len(panel_rows))
+                thumb_y = track.y + (track.h - thumb_h) * marks_scroll // (len(panel_rows) - LIST_ROWS)
+                pygame.draw.rect(screen, T["grid"], track, border_radius=2)
+                pygame.draw.rect(screen, T["chip_edge"], (track.x, thumb_y, track.w, thumb_h), border_radius=2)
+            for row, (kind, idx) in enumerate(list_rows):
                 ry = marks_panel_rect.y + 6 + row * row_h
                 x0 = marks_panel_rect.x + 12
+                row_rect = pygame.Rect(marks_panel_rect.x + 4, ry - 1, marks_panel_rect.w - 14, row_h - 2)
+                mark_row_rects.append((row_rect, (kind, idx)))
+                in_bar = (kind == "mark" and idx == selected_mark) or (
+                    kind == "cage" and selected_mark is None and len(sel_areas) == 1 and sel_areas[0][0] == idx)
+                if in_bar or row_rect.collidepoint(mouse):
+                    pygame.draw.rect(screen, T["key_hover"] if in_bar else T["chip"], row_rect, border_radius=8)
                 if kind == "cage":
                     cs, ccls, _ = cages[idx]
                     filled = [board[r][c] for r, c in ccls if board[r][c]]
@@ -1337,7 +1379,8 @@ def play_mode(cages, solution):
         gr = (my - GRID_OFFSET_Y) // CELL_SIZE
         gc = (mx - GRID_OFFSET_X) // CELL_SIZE
         if 0 <= gr < 9 and 0 <= gc < 9 and GRID_OFFSET_X <= mx < GRID_OFFSET_X + GRID_SIZE \
-                and GRID_OFFSET_Y <= my < GRID_OFFSET_Y + GRID_SIZE:
+                and GRID_OFFSET_Y <= my < GRID_OFFSET_Y + GRID_SIZE \
+                and not (marks_panel_rect is not None and marks_panel_rect.collidepoint(mouse)):
             tip_lines, bold_rows = [], set()
             for ci, cs, ccls, distinct in areas_at((gr, gc)):
                 if tip_lines:

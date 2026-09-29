@@ -370,6 +370,13 @@ def play_mode(cages, solution):
         excl_combo_set = cage_excluded_combos.get(key, set())
         all_combos = _cage_combos(board, cs, ccls)
         pencil_ok_fs = {frozenset(c) for c in _cage_combos(board, cs, ccls, candidates=pencil_cands)}
+
+        def ruled_out(combo):
+            return (bool(excl and set(combo) & excl) or frozenset(combo) in excl_combo_set
+                    or frozenset(combo) not in pencil_ok_fs)
+
+        # Valid combinations first, so the ones cut off by "+N more" are struck ones
+        all_combos = sorted(all_combos, key=ruled_out)
         cx, cy = x0, y0
         shown = 0
         for combo in all_combos:
@@ -383,7 +390,7 @@ def play_mode(cages, solution):
                 break
             combo_fs = frozenset(combo)
             is_digit_excl = bool(excl and set(combo) & excl)
-            is_off = is_digit_excl or combo_fs in excl_combo_set or combo_fs not in pencil_ok_fs
+            is_off = ruled_out(combo)
             chip = pygame.Rect(cx, cy, w, 27)
             hover = chip.collidepoint(mouse)
             pygame.draw.rect(screen, T["chip_off"] if is_off else (T["key_hover"] if hover else T["chip"]),

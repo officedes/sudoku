@@ -468,24 +468,56 @@ def play_mode(cages, solution):
                 hint_panel = {"cells": [(r, c)], "title": s["text"],
                               "lines": lines + [f"Place {s['value']} in {_COL[c]}{r+1} yourself when you're ready."]}
                 return f"Hint: {s['text']}"
-            if s["type"] == "elimination" and prev is not None and now is not None and s["text"] not in hinted_steps:
+            if s["type"] == "elimination" and prev is not None and now is not None:
                 removed = [(int(k[1:]) - 1, _COL.index(k[0]), d)
                            for k, ds in prev.items() for d in ds if d not in now.get(k, ds)]
                 # New to the player unless their pencil marks already rule it out
                 new = [(r, c, d) for r, c, d in removed
                        if board[r][c] == 0 and (not pencil[r][c] or d in pencil[r][c])]
-                if new:
-                    hinted_steps.add(s["text"])
+                # The explainer's re-filter of every cage at once is hinted one cage at a time
+                bulk = s["text"].startswith("Cage combo filtering")
+                parts = {}
+                for r, c, d in new:
+                    parts.setdefault(cell_cage_map.get((r, c)) if bulk else None, []).append((r, c, d))
+                for key, part in parts.items():
+                    if (s["text"], key) in hinted_steps:
+                        continue
+                    hinted_steps.add((s["text"], key))
                     batch = []
-                    for r, c, d in new:
+                    for r, c, d in part:
                         if d in pencil[r][c]:
                             batch.append(("pencil_auto", r, c, board[r][c], set(pencil[r][c])))
                             pencil[r][c].discard(d)
                     if batch:
                         history.append(("batch", batch))
                     hints_used += 1
-                    hint_panel = {"cells": sorted({(r, c) for r, c, _ in new}), "title": s["text"], "lines": lines}
-                    return f"Hint: {s['text']}"
+                    title, shown = s["text"], sorted({(r, c) for r, c, _ in part})
+                    if key is not None:
+                        cs, ccls, _ = cages[key]
+                        ccls = [tuple(x) for x in ccls]
+                        names = [f"{_COL[c]}{r+1}" for r, c in ccls]
+                        left = {n: now.get(n, []) for (r, c), n in zip(ccls, names) if start[r][c] == 0}
+                        fits = ", ".join("{" + ",".join(map(str, co)) + "}"
+                                         for co in _cage_combos(start, cs, ccls, candidates=left))
+                        rem = cs - sum(start[r][c] for r, c in ccls)
+                        title = f"Cage {cs} [{', '.join(names)}]: only {fits} still fit"
+                        lines = [f"With the digits its empty cells can still take, only {fits} add up to {rem}"
+                                 f"{f' (the cage {cs} minus its placed digits)' if rem != cs else ''}."]
+                        for r, c, d in sorted(part):
+                            n = f"{_COL[c]}{r+1}"
+                            others = [x for x in left if x != n]
+                            if len(others) == 1:
+                                o, need = others[0], rem - d
+                                why = (f"{n} = {d} would need {o} = {need}, which isn't a digit" if not 1 <= need <= 9
+                                       else f"{n} = {d} would need {o} = {need} too" if need == d
+                                       else f"{n} = {d} would need {o} = {need}, but {o} can't be {need}")
+                            else:
+                                why = (f"with {n} = {d}, the other cells can't make up the remaining {rem - d}"
+                                       f" from the digits they can still take")
+                            lines.append(f"{why}, so {n} loses {d}.")
+                        shown = ccls
+                    hint_panel = {"cells": shown, "title": title, "lines": lines}
+                    return f"Hint: {title}"
             if now is not None:
                 prev = now
         return None

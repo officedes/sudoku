@@ -128,6 +128,12 @@ def main():
          27: ["shot:play_marks_deleted"]},
         lambda: visualizer.play_mode(cages, sol))
 
+    # Strike a combination, then click the struck chip (it moves after the valid ones) to bring it back
+    run({3: click(btn_pt("Fill All")), 5: click(cell_pt(3, 3)),
+         9: click(first_chip), 11: ["shot:play_combo_struck"],
+         13: click((GX + 104, 48 + 14 + 31)), 15: ["shot:play_combo_back"]},
+        lambda: visualizer.play_mode(cages, sol))
+
     run({3: click(btn_pt("Fill All")),
          6: click(cell_pt(4, 4)), 8: click(pad_pt(d, 0)),
          11: key(pygame.K_ESCAPE),

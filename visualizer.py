@@ -789,30 +789,48 @@ def play_mode(cages, solution, save_path=None):
                             if ci not in cage_excluded_combos:
                                 cage_excluded_combos[ci] = set()
                             was_excluded = combo_t in cage_excluded_combos[ci]
-                            if was_excluded:
+                            _, cs, ccls, _ = next(a for a in summed_areas() if a[0] == ci)
+                            pencil_cands = {f"{_COL[c]}{r+1}": list(pencil[r][c])
+                                            for r, c in ccls if board[r][c] == 0 and pencil[r][c]} or None
+                            fits_pencils = combo_t in {frozenset(co) for co in
+                                                       _cage_combos(board, cs, ccls, candidates=pencil_cands)}
+                            pencil_changes = []
+                            if was_excluded or not fits_pencils:
+                                # Struck out (ruled out, or the pencil marks lost a digit it
+                                # needs): bring it back, digits and all, where sudoku allows
                                 cage_excluded_combos[ci].discard(combo_t)
-                                message = f"Un-excluded {sorted(combo_t)}"
+                                added = 0
+                                for (cr, cc) in ccls:
+                                    if board[cr][cc] or not pencil[cr][cc]:
+                                        continue
+                                    back = (set(combo_t) & get_possible_values(board, cr, cc)) - pencil[cr][cc]
+                                    if back:
+                                        pencil_changes.append((cr, cc, set(pencil[cr][cc])))
+                                        pencil[cr][cc] |= back
+                                        added += len(back)
+                                message = f"Brought back {sorted(combo_t)}"
+                                if added:
+                                    message += f" (restored {added} pencil marks)"
                             else:
                                 cage_excluded_combos[ci].add(combo_t)
                                 message = f"Excluded {sorted(combo_t)}"
-                            # Update pencil marks: remove digits no longer in any valid combo
-                            _, cs, ccls, _ = next(a for a in summed_areas() if a[0] == ci)
-                            excl = cage_excluded.get(ci, set())
-                            remaining = _cage_combos(board, cs, ccls, excluded=excl, excluded_combos=cage_excluded_combos.get(ci, set()))
-                            still_valid = {num for combo in remaining for num in combo}
-                            removed_count = 0
-                            pencil_changes = []
-                            for (cr, cc) in ccls:
-                                if board[cr][cc] != 0:
-                                    continue
-                                gone = pencil[cr][cc] - still_valid
-                                if gone:
-                                    pencil_changes.append((cr, cc, set(pencil[cr][cc])))
-                                    pencil[cr][cc] -= gone
-                                    removed_count += len(gone)
+                                # Remove pencil digits no longer in any valid combo
+                                excl = cage_excluded.get(ci, set())
+                                remaining = _cage_combos(board, cs, ccls, excluded=excl,
+                                                         excluded_combos=cage_excluded_combos[ci])
+                                still_valid = {num for combo in remaining for num in combo}
+                                removed_count = 0
+                                for (cr, cc) in ccls:
+                                    if board[cr][cc] != 0:
+                                        continue
+                                    gone = pencil[cr][cc] - still_valid
+                                    if gone:
+                                        pencil_changes.append((cr, cc, set(pencil[cr][cc])))
+                                        pencil[cr][cc] -= gone
+                                        removed_count += len(gone)
+                                if removed_count:
+                                    message += f" (removed {removed_count} pencil marks)"
                             history.append(("combo_excl", ci, combo_t, was_excluded, pencil_changes))
-                            if removed_count:
-                                message += f" (removed {removed_count} pencil marks)"
                             msg_color = (180, 80, 0)
                             break
                     else:

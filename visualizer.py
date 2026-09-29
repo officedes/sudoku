@@ -14,6 +14,7 @@ Play controls:
   P toggle pencil mode | C check errors | R reset | Q quit
 """
 
+import json
 import pygame
 import os
 import sys
@@ -27,6 +28,8 @@ from killer import (
     COL_LETTERS as _COL, can_assign_combo, digit_combos,
 )
 from main import load_puzzle, PUZZLES_DIR
+
+SAVES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saves")
 
 
 def _compute_candidates(board, cages):
@@ -244,8 +247,14 @@ def print_steps(cages, solution, steps):
         print()
 
 
-def play_mode(cages, solution):
-    """Interactive mode — human solves the puzzle."""
+def play_mode(cages, solution, save_path=None):
+    """Interactive mode — human solves the puzzle.
+
+    With `save_path` the game is kept there - every few seconds and on close -
+    and picked up again next time: digits, pencil marks, ruled-out
+    combinations, marks, the clock and the hints used (not the undo history).
+    Solving the puzzle deletes the save.
+    """
     import time as _time
 
     pygame.init()
@@ -599,7 +608,65 @@ def play_mode(cages, solution):
         show_errors = False
         highlight_digit = None
 
+    # Keys of the per-cage rule-outs are cage indices or ("mark", id); JSON has no tuples
+    def key_out(k):
+        return list(k) if isinstance(k, tuple) else k
+
+    def key_in(k):
+        return tuple(k) if isinstance(k, list) else k
+
+    def save_progress():
+        if not save_path:
+            return
+        if all(board[r][c] == solution[r][c] for r in range(9) for c in range(9)):
+            if os.path.exists(save_path):
+                os.remove(save_path)  # solved: next time starts fresh
+            return
+        state = {
+            "board": board,
+            "pencil": [[sorted(p) for p in row] for row in pencil],
+            "elapsed": _time.time() - start_time,
+            "hints_used": hints_used,
+            "cage_excluded": [[key_out(k), sorted(v)] for k, v in cage_excluded.items()],
+            "cage_excluded_combos": [[key_out(k), [sorted(co) for co in v]] for k, v in cage_excluded_combos.items()],
+            "user_cages": [{**uc, "cells": [list(x) for x in uc["cells"]], "color": list(uc["color"])}
+                           for uc in user_cages],
+            "next_mark_id": next_mark_id,
+            "hinted_steps": [list(h) if isinstance(h, tuple) else h for h in hinted_steps],
+        }
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        tmp = save_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+        os.replace(tmp, save_path)  # never leave a half-written save behind
+
+    if save_path and os.path.exists(save_path):
+        try:
+            with open(save_path, encoding="utf-8") as f:
+                saved = json.load(f)
+            for r in range(9):
+                for c in range(9):
+                    board[r][c] = saved["board"][r][c]
+                    pencil[r][c] = set(saved["pencil"][r][c])
+            start_time = _time.time() - saved["elapsed"]
+            hints_used = saved["hints_used"]
+            cage_excluded.update({key_in(k): set(v) for k, v in saved["cage_excluded"]})
+            cage_excluded_combos.update({key_in(k): {frozenset(co) for co in v}
+                                         for k, v in saved["cage_excluded_combos"]})
+            user_cages.extend({**uc, "cells": [tuple(x) for x in uc["cells"]], "color": tuple(uc["color"])}
+                              for uc in saved["user_cages"])
+            next_mark_id = saved["next_mark_id"]
+            hinted_steps.update(tuple(h) if isinstance(h, list) else h for h in saved["hinted_steps"])
+            placed_n = sum(1 for row in board for v in row if v)
+            message = f"Welcome back: {placed_n}/81 placed, {int(saved['elapsed'] // 60)} min in"
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            message = f"Couldn't read the saved game ({e}); starting fresh"
+    last_save = _time.time()
+
     while running:
+        if _time.time() - last_save > 5:
+            save_progress()
+            last_save = _time.time()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -1431,6 +1498,7 @@ def play_mode(cages, solution):
         pygame.display.flip()
         clock.tick(60)
 
+    save_progress()
     pygame.quit()
 
 
@@ -1455,7 +1523,7 @@ def main():
 
     if play:
         cages, solution = load_puzzle(filename)
-        play_mode(cages, solution)
+        play_mode(cages, solution, save_path=os.path.join(SAVES_DIR, filename))
         return
 
     cages, solution, steps = load_and_solve(filename)

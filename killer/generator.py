@@ -371,7 +371,7 @@ def _plant_big(board, count, sizes=(7, 9), tries=500):
 
 
 def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
-                      long_size=(6, 8), max_singles=1, min_contradictions=0, min_advanced=0,
+                      long_size=(6, 8), max_singles=1, min_contradictions=0, min_advanced=0, max_advanced=None,
                       uncaged=0, big_cages=0, rescue_singles=3, rescue_uncage=True, attempts=800):
     """Grow a puzzle whose hardest needed technique lies in [min_level, max_level]
     (see solver.LEVEL_NAMES), shaped like published hard killers: a count in
@@ -392,7 +392,8 @@ def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
     level-4 puzzles. `min_advanced` likewise keeps merging until the explained
     solve (what hints walk through) takes that many advanced steps
     (solver.advanced_steps): the level alone lets a puzzle through that the
-    explainer finishes with none.
+    explainer finishes with none. `max_advanced` caps them; a grid that
+    overshoots is given up, as more merging only makes it harder.
 
     `uncaged` leaves that many cells in no cage: once the layout is nearly
     done, one-cell cages (or edge cells of bigger cages) are dropped while the
@@ -410,11 +411,20 @@ def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
             return solve_killer_sudoku(create_board(), _to_cages(board, groups), verbose=False,
                                        level=lv, stats=stats)[1]
 
-    def hard_enough(groups):
-        """Outside the solvable-at-max_level check, the costly last tests: not
-        solvable a level lower, and enough advanced steps when asked for."""
-        return ((min_level == 1 or not solvable(groups, min_level - 1))
-                and (not min_advanced or advanced_steps(_to_cages(board, groups)) >= min_advanced))
+    def verdict(groups):
+        """Outside the solvable-at-max_level check, the costly last tests: None
+        while it is still too easy (a level lower solves it, or too few advanced
+        steps) - keep merging; True once in range; False when the advanced
+        steps already overshoot max_advanced - merging only adds more, so give
+        up on this grid."""
+        if min_level > 1 and solvable(groups, min_level - 1):
+            return None
+        if not min_advanced and max_advanced is None:
+            return True
+        steps = advanced_steps(_to_cages(board, groups))
+        if steps < min_advanced:
+            return None
+        return max_advanced is None or steps <= max_advanced
 
     if big_cages:
         long_size = (7, 9)
@@ -467,7 +477,7 @@ def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
                         and sweeps >= min_contradictions \
                         and min_cages <= len(groups) <= cages[1] \
                         and sum(len(g) >= long_size[0] for g in groups) >= long_cages[0] \
-                        and hard_enough(groups):
+                        and verdict(groups):
                     return _to_cages(board, groups), [row[:] for row in board]
                 return None
         if spots:
@@ -501,8 +511,12 @@ def generate_to_level(min_level, max_level=4, cages=(24, 27), long_cages=(1, 4),
                     and sum(len(g) == 1 for g in groups) <= max_singles
                     and sum(len(g) >= long_size[0] for g in groups) >= long_cages[0]
                     and sweeps >= min_contradictions)
-        if in_shape and hard_enough(groups):
-            return _to_cages(board, groups), [row[:] for row in board]
+        if in_shape:
+            ok = verdict(groups)
+            if ok:
+                return _to_cages(board, groups), [row[:] for row in board]
+            if ok is False:
+                return None
     return None
 
 

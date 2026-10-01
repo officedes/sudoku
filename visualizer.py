@@ -1159,8 +1159,8 @@ def play_mode(cages, solution, save_path=None):
                     pencil[cr][cc2].discard(val)
 
     def do_reset():
-        """Reset everything."""
-        nonlocal start_time, hints_used, show_errors, highlight_digit
+        """Reset everything, the player's marks included."""
+        nonlocal start_time, hints_used, show_errors, highlight_digit, selected_mark, marks_open
         for r in range(9):
             for c in range(9):
                 board[r][c] = 0
@@ -1169,6 +1169,8 @@ def play_mode(cages, solution, save_path=None):
         cage_excluded.clear()
         cage_excluded_combos.clear()
         hinted_steps.clear()
+        user_cages.clear()
+        selected_mark, marks_open = None, False
         selected.clear()
         start_time = _time.time()
         hints_used = 0

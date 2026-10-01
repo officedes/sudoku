@@ -29,6 +29,7 @@ from killer import (
     COL_LETTERS as _COL, can_assign_combo, digit_combos,
 )
 from killer.helpers import get_house_cells
+from killer.strategies import _REGIONS
 from main import load_puzzle, PUZZLES_DIR
 
 SAVES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saves")
@@ -194,6 +195,43 @@ def _sum_reason(terms, target, cands, board, differ, x, d):
             f" column, box or cage must differ)")
 
 
+def _sum_story(region, terms, target, cages):
+    """How a rule-of-45 sum arises for a region of whole houses:
+    ("innies", area, cages inside, their total) - the region's total minus the
+    cages inside it; ("outies", area, cages reaching in, their total) - those
+    cages minus the region's total; or ("mixed", area, cages inside, their
+    total, cages sticking out, their total) - the region's total minus both,
+    leaving its uncovered cells minus the cells counted outside it.
+    None otherwise."""
+    total, coef = _REGION.get(region, (None, {}))
+    if not coef or not all(k == 1 for k in coef.values()):
+        return None
+    if any(k not in (1, -1) for _, k in terms):
+        return None
+    if any(k == -1 for _, k in terms):
+        area = set(coef)
+        outs = {x for x, k in terms if k == -1}
+        ins = {x for x, k in terms if k == 1}
+        if outs & area or not ins <= area:
+            return None
+        inside = [(cs, [tuple(x) for x in cls]) for cs, cls, _ in cages if {tuple(x) for x in cls} <= area]
+        out_cages = [(cs, [tuple(x) for x in cls]) for cs, cls, _ in cages if {tuple(x) for x in cls} & outs]
+        in_sum, out_sum = sum(cs for cs, _ in inside), sum(cs for cs, _ in out_cages)
+        if target != total - in_sum - out_sum:
+            return None
+        return ("mixed", area, [x for _, cls in inside for x in cls], in_sum,
+                [x for _, cls in out_cages for x in cls], out_sum)
+    area, tcells = set(coef), {x for x, _ in terms}
+    inside = [(cs, [tuple(x) for x in cls]) for cs, cls, _ in cages if {tuple(x) for x in cls} <= area]
+    touching = [(cs, [tuple(x) for x in cls]) for cs, cls, _ in cages if {tuple(x) for x in cls} & area]
+    in_sum, touch_sum = sum(cs for cs, _ in inside), sum(cs for cs, _ in touching)
+    if tcells <= area and target == total - in_sum:
+        return "innies", area, [x for _, cls in inside for x in cls], in_sum
+    if not tcells & area and target == touch_sum - total:
+        return "outies", area, [x for _, cls in touching for x in cls], touch_sum
+    return None
+
+
 def explain_step(text, removed, cands, after, board, cages):
     """(title, lines, reason cells) in plain words for an elimination step of the
     explained solve, from the candidates before it (`cands`) and after it
@@ -257,16 +295,29 @@ def explain_step(text, removed, cands, after, board, cages):
             terms, target = [(x, -k) for x, k in terms], -target
         ins = [x for x, k in terms if k > 0]
         outs = [x for x, k in terms if k < 0]
-        m2 = re.fullmatch(r"(rows|columns|boxes) (\d)-(\d)", region)
-        count = int(m2[3]) - int(m2[2]) + 1 if m2 else 1 if re.fullmatch(r"(row|column|box) \d", region) else None
-        total = (f"{region} {'have' if count > 1 else 'has'} a known total ({45 * count})" if count
-                 else f"{region} has a known total")
-        if not outs:
-            how = (f"Every row, column and box adds up to 45, so {total}. Take away the cages"
-                   f" lying completely inside it: the cells left over ({_list([_nm(*x) for x in ins])}) must"
-                   f" make up the rest.")
-        elif not ins:
-            how = f"Every row, column and box adds up to 45, so {total}."
+        r_total, r_coef = _REGION.get(region, (None, {}))
+        plural = region.split()[0] in ("rows", "columns", "boxes")
+        total = (f"{region} {'have' if plural else 'has'} a known total ({r_total})"
+                 if r_coef and all(k == 1 for k in r_coef.values()) else f"{region} has a known total")
+        story = _sum_story(region, terms, target, cages)
+        named = _list([_nm(*x) for x, _ in terms])
+        if story and story[0] == "innies":
+            how = (f"Every row, column and box adds up to 45, so {total}. The cages lying completely inside"
+                   f" it add up to {story[3]}, so the cells left over ({named}) make the rest:"
+                   f" {r_total} − {story[3]} = {target}.")
+        elif story and story[0] == "outies":
+            how = (f"Every row, column and box adds up to 45, so {total}. The cages reaching into it add up"
+                   f" to {story[3]}; their cells outside it ({named}) make up the excess:"
+                   f" {story[3]} − {r_total} = {target}.")
+        elif story:
+            how = (f"Every row, column and box adds up to 45, so {total}. The cages lying completely inside"
+                   f" it add up to {story[3]}, and the cages sticking out of it to reach"
+                   f" {_list([_nm(*x) for x in outs])} add up to {story[5]}. Together they cover the region except"
+                   f" {_list([_nm(*x) for x in ins])}, and also count {_list([_nm(*x) for x in outs])} outside"
+                   f" it, so {_sum_expr(terms)} = {r_total} − {story[3]} − {story[5]} = {target}.")
+        elif not ins or not outs:
+            how = (f"Every row, column and box adds up to 45, so {total}; comparing that with the sums of"
+                   f" the cages covering it pins down {named}.")
         else:
             how = (f"Every row, column and box adds up to 45, so {total}. Its cages that"
                    f" stick out reach cells outside it ({_list([_nm(*x) for x in outs])}); comparing their sums"
@@ -328,6 +379,217 @@ def _changes_line(removed):
     for r, c, d in removed:
         by_digit.setdefault(d, []).append(_nm(r, c))
     return "Removes " + "; ".join(f"{d} from {_list(sorted(ns))}" for d, ns in sorted(by_digit.items())) + "."
+
+
+
+# --- Visual hint walkthrough: frames for a separate window -------------------------------
+#
+# A frame is {"caption", "shade": cells, "blue": cells, "orange": cells,
+# "circle": [(r, c, d)] (green ring on a candidate), "strike": [(r, c, d)],
+# "place": [(r, c, v)]}; the window steps through them over the grid.
+
+_REGION = {name: (total, coef) for name, total, coef in _REGIONS}
+
+
+def _frame(caption, **marks):
+    return {"caption": caption, **{k: [list(x) for x in v] for k, v in marks.items()}}
+
+
+def hint_frames(step, title, removed, lines, reason, cands, board, cages):
+    """Walkthrough frames for a hint: the reasoning one piece at a time, then the change.
+    `lines` is the hint's explanation (without the 'Removes ...' summary)."""
+    text = step["text"]
+    targets = sorted({(r, c) for r, c, _ in removed})
+
+    def holding(cells_, d):
+        return [(r, c, d) for r, c in cells_ if d in cands.get(_nm(r, c), [])]
+
+    if step["type"] == "placement":
+        (r, c), v = step["cell"], step["value"]
+        m = re.search(r"hidden single in (.+?)\)|Rule of 45 \((.+?)\)", text)
+        house = _house(m[1] or m[2]) if m else []
+        return [_frame(ln, shade=house, blue=reason, orange=[(r, c)]) for ln in lines] + \
+            [_frame(f"So {v} goes in {_nm(r, c)}.", shade=house, orange=[(r, c)], place=[(r, c, v)])]
+
+    m = re.match(r"Naked \w+ in (.+?): \[(.*?)\]", text)
+    if m:
+        cl = [_rc(n) for n in m[2].split(", ")]
+        ring = [(r, c, d) for r, c in cl for d in cands.get(_nm(r, c), [])]
+        return [_frame(lines[0], blue=cl, circle=ring),
+                _frame(lines[1], shade=_house(m[1]), blue=cl, orange=targets, strike=removed)]
+
+    m = re.match(r"(?:Pointing: (\d) in box (\d) only in (row|col) (\d))|(?:Box-line: (\d) in (.+?) only in box (\d))", text)
+    if m:
+        if m[1]:
+            d, first, second = int(m[1]), f"box {m[2]}", f"{'row' if m[3] == 'row' else 'column'} {m[4]}"
+        else:
+            d, first, second = int(m[5]), m[6], f"box {m[7]}"
+        spots = holding(_house(first), d)
+        return [_frame(lines[0], shade=_house(first), circle=spots),
+                _frame(lines[1], shade=_house(second), circle=spots, orange=targets, strike=removed)]
+
+    m = re.match(r"Innies/outies: (.+) -> removed", text)
+    if m:
+        region, eq = m[1].rsplit(": ", 1)
+        expr, target = eq.rsplit(" = ", 1)
+        terms = [(_rc(n), (-1 if sign == "-" else 1) * int(k or 1)) for sign, k, n in _CELL_TERM.findall(expr)]
+        target = int(target)
+        if all(k < 0 for _, k in terms):
+            terms, target = [(x, -k) for x, k in terms], -target
+        tcells = [x for x, _ in terms]
+        frames = []
+        story = _sum_story(region, terms, target, cages)
+        if story:
+            kind, area, cage_cells, cage_sum = story[:4]
+            total = _REGION[region][0]
+            verb = "add" if region.split()[0] in ("rows", "columns", "boxes") else "adds"
+            frames.append(_frame(f"Every row, column and box adds up to 45, so {region} {verb} up to {total}.",
+                                 shade=area))
+            if kind == "innies":
+                frames.append(_frame(f"The cages lying completely inside {region} add up to {cage_sum}.",
+                                     shade=area, blue=cage_cells))
+                frames.append(_frame(f"The cells left over must make the rest: {_sum_expr(terms)} = {total} − "
+                                     f"{cage_sum} = {target}.", shade=area, orange=tcells))
+            elif kind == "mixed":
+                out_cells, out_sum = story[4], story[5]
+                ins = [x for x, k in terms if k == 1]
+                outs = [x for x, k in terms if k == -1]
+                frames.append(_frame(f"The cages lying completely inside {region} add up to {cage_sum}.",
+                                     shade=area, blue=cage_cells))
+                frames.append(_frame(f"Count the cages that stick out of {region} in full too: {out_sum} more.",
+                                     shade=area, blue=cage_cells + out_cells))
+                frames.append(_frame(f"That covers {region} except {_list([_nm(*x) for x in ins])}, and also"
+                                     f" counts {_list([_nm(*x) for x in outs])} outside it: {_sum_expr(terms)} ="
+                                     f" {total} − {cage_sum} − {out_sum} = {target}.",
+                                     shade=area, blue=cage_cells + out_cells, orange=tcells))
+            else:
+                frames.append(_frame(f"The cages that reach into {region} add up to {cage_sum}.",
+                                     shade=area, blue=cage_cells))
+                frames.append(_frame(f"Their cells outside {region} make up the excess: {_sum_expr(terms)} = "
+                                     f"{cage_sum} − {total} = {target}.", shade=area, orange=tcells))
+        if not frames:
+            frames = [_frame(lines[0], orange=tcells), _frame(lines[1], orange=tcells)]
+        reasons = [ln for ln in lines[2:]]
+        for (r, c, d), why in zip(sorted(removed), reasons):
+            frames.append(_frame(why, blue=[x for x in tcells if x != (r, c)], orange=[(r, c)], strike=[(r, c, d)]))
+        return frames
+
+    m = re.match(r"Cage (\d+) \[(.*?)\]", title)
+    if m:
+        ccls = [_rc(n) for n in m[2].split(", ")]
+        frames = [_frame(lines[0], blue=ccls)]
+        for (r, c, d), why in zip(sorted(removed), lines[1:]):
+            frames.append(_frame(why, blue=[x for x in ccls if x != (r, c)], orange=[(r, c)], strike=[(r, c, d)]))
+        return frames
+
+    frames = [_frame(ln, blue=reason, orange=targets) for ln in lines]
+    frames.append(_frame(_changes_line(removed), blue=reason, orange=targets, strike=removed))
+    return frames
+
+
+def hint_window(path):
+    """The visual walkthrough of one hint, in its own window (its own process:
+    pygame drives one window per process). Right/Space = next, Left = back,
+    Esc = close."""
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    cages = [(s, [tuple(x) for x in cls], col) for s, cls, col in data["cages"]]
+    board, cands, frames = data["board"], data["candidates"], data["frames"]
+    pygame.init()
+    T = THEME
+    CELL, GX, GY = 50, 24, 92
+    W = GX * 2 + CELL * 9
+    CAP_Y = GY + CELL * 9 + 12
+    H = CAP_Y + 150
+    screen = pygame.display.set_mode((W, H))
+    pygame.display.set_caption("Hint explained")
+    f_title = pygame.font.SysFont("segoeui", 16, bold=True)
+    f_cap = pygame.font.SysFont("segoeui", 16)
+    f_sum = pygame.font.SysFont("segoeui", 11, bold=True)
+    f_pen = pygame.font.SysFont("segoeui", 11)
+    f_pen_b = pygame.font.SysFont("segoeui", 12, bold=True)
+    f_dig = pygame.font.SysFont("segoeui", 30)
+    f_lbl = pygame.font.SysFont("segoeui", 11, bold=True)
+    f_btn = pygame.font.SysFont("segoeui", 14, bold=True)
+    clock = pygame.time.Clock()
+    i = 0
+    running = True
+    while running:
+        back = pygame.Rect(GX, H - 44, 90, 32)
+        nxt = pygame.Rect(W - GX - 90, H - 44, 90, 32)
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
+                running = False
+            elif event.type == pygame.KEYDOWN and event.key in (pygame.K_RIGHT, pygame.K_SPACE, pygame.K_RETURN):
+                i = min(i + 1, len(frames) - 1)
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_LEFT:
+                i = max(i - 1, 0)
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if nxt.collidepoint(event.pos):
+                    i = min(i + 1, len(frames) - 1)
+                elif back.collidepoint(event.pos):
+                    i = max(i - 1, 0)
+        fr = frames[i]
+        shade = {tuple(x) for x in fr.get("shade", [])}
+        struck = {tuple(x) for x in fr.get("strike", [])}
+        ringed = {tuple(x) for x in fr.get("circle", [])}
+        placed = {(r, c): v for r, c, v in fr.get("place", [])}
+        screen.fill(T["bg"])
+        y = 10
+        for line in wrap_text([data["title"]], f_title, W - 2 * GX)[:2]:
+            screen.blit(f_title.render(line, True, T["hl"]), (GX, y))
+            y += 22
+        cell_bg = {}
+        for r in range(9):
+            for c in range(9):
+                cell_bg[(r, c)] = T["house"] if (r, c) in shade else T["cell"]
+                pygame.draw.rect(screen, cell_bg[(r, c)], (GX + c * CELL, GY + r * CELL, CELL, CELL))
+        draw_grid_lines(screen, GX, GY, CELL)
+        draw_cages(screen, cages, cell_bg, f_sum, GX, GY, CELL)
+        for k in range(9):
+            t = f_lbl.render(_COL[k], True, T["muted"])
+            screen.blit(t, (GX + k * CELL + (CELL - t.get_width()) // 2, GY - 16))
+            t = f_lbl.render(str(k + 1), True, T["muted"])
+            screen.blit(t, ((GX - t.get_width()) // 2, GY + k * CELL + (CELL - t.get_height()) // 2))
+        sub = (CELL - 12) / 3
+        for r in range(9):
+            for c in range(9):
+                x, y0 = GX + c * CELL, GY + r * CELL
+                if board[r][c] or (r, c) in placed:
+                    v = board[r][c] or placed[(r, c)]
+                    t = f_dig.render(str(v), True, T["place"] if (r, c) in placed else T["digit"])
+                    screen.blit(t, (x + (CELL - t.get_width()) // 2, y0 + (CELL - t.get_height()) // 2 + 1))
+                    continue
+                for d in cands.get(_nm(r, c), []):
+                    cx, cy = x + 6 + ((d - 1) % 3 + 0.5) * sub, y0 + 10 + ((d - 1) // 3 + 0.5) * sub
+                    if (r, c, d) in struck:
+                        t = f_pen_b.render(str(d), True, T["digit_bad"])
+                        screen.blit(t, (cx - t.get_width() / 2, cy - t.get_height() / 2))
+                        pygame.draw.line(screen, T["digit_bad"], (cx - 6, cy + 5), (cx + 6, cy - 5), 2)
+                    elif (r, c, d) in ringed:
+                        t = f_pen_b.render(str(d), True, T["place"])
+                        screen.blit(t, (cx - t.get_width() / 2, cy - t.get_height() / 2))
+                        pygame.draw.circle(screen, T["place"], (cx, cy), sub / 2, 1)
+                    else:
+                        t = f_pen.render(str(d), True, T["pencil"])
+                        screen.blit(t, (cx - t.get_width() / 2, cy - t.get_height() / 2))
+        for key, color, inset in (("blue", T["box"], 4), ("orange", T["hl"], 2)):
+            for r, c in fr.get(key, []):
+                pygame.draw.rect(screen, color, (GX + c * CELL + inset, GY + r * CELL + inset,
+                                                 CELL - 2 * inset, CELL - 2 * inset), 2, border_radius=6)
+        for j, line in enumerate(wrap_text([fr["caption"]], f_cap, W - 2 * GX)[:5]):
+            screen.blit(f_cap.render(line, True, T["text"]), (GX, CAP_Y + j * 21))
+        mouse = pygame.mouse.get_pos()
+        for rect, label, on in ((back, "< Back", i > 0), (nxt, "Next >", i < len(frames) - 1)):
+            pygame.draw.rect(screen, T["btn_hover"] if on and rect.collidepoint(mouse) else T["btn"], rect,
+                             border_radius=8)
+            t = f_btn.render(label, True, T["text"] if on else T["muted"])
+            screen.blit(t, (rect.centerx - t.get_width() // 2, rect.centery - t.get_height() // 2))
+        t = f_btn.render(f"{i + 1} / {len(frames)}", True, T["muted"])
+        screen.blit(t, ((W - t.get_width()) // 2, H - 44 + (32 - t.get_height()) // 2))
+        pygame.display.flip()
+        clock.tick(30)
+    pygame.quit()
 
 
 def load_and_solve(filename):
@@ -728,6 +990,25 @@ def play_mode(cages, solution, save_path=None):
             history.append(("batch", batch))
         return filled_count, len(targets)
 
+    walkthrough = {"proc": None}  # the open walkthrough window's process
+
+    def open_walkthrough(title, frames, cands, start):
+        """Show the hint's frames in their own window, replacing the last one."""
+        if pygame.display.get_driver() == "dummy":
+            return  # headless tests
+        import subprocess
+        import tempfile
+        path = os.path.join(tempfile.gettempdir(), "killer_sudoku_hint.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"title": title, "frames": frames, "candidates": cands, "board": start,
+                       "cages": [[cs, [list(x) for x in cls], list(col) if isinstance(col, tuple) else col]
+                                 for cs, cls, col in cages]}, f)
+        if walkthrough["proc"] is not None and walkthrough["proc"].poll() is None:
+            walkthrough["proc"].terminate()
+        code = "import sys, visualizer; visualizer._dpi_aware(); visualizer.hint_window(sys.argv[1])"
+        walkthrough["proc"] = subprocess.Popen([sys.executable, "-c", code, path],
+                                               cwd=os.path.dirname(os.path.abspath(__file__)))
+
     def do_hint():
         """Explain the next step from the player's position, one at a time.
 
@@ -791,6 +1072,8 @@ def play_mode(cages, solution, save_path=None):
                     reason = [tuple(x) for x in cages[cell_cage_map[(r, c)]][1] if tuple(x) != (r, c)]
                 hint_panel = {"cells": [(r, c)], "reason": reason, "removals": [], "title": s["text"],
                               "lines": [f"Place {v} in {_nm(r, c)} yourself when you're ready."] + lines}
+                open_walkthrough(s["text"], hint_frames(s, s["text"], [], lines, reason, prev or now, start, cages),
+                                 prev or now, start)
                 return f"Hint: {s['text']}"
             if s["type"] == "elimination" and prev is not None and now is not None:
                 for key, part in unseen_parts(s, prev, now).items():
@@ -814,6 +1097,7 @@ def play_mode(cages, solution, save_path=None):
                             title, lines, reason = plain
                     hint_panel = {"cells": sorted({(r, c) for r, c, _ in part}), "reason": reason,
                                   "removals": part, "title": title, "lines": [_changes_line(part)] + lines}
+                    open_walkthrough(title, hint_frames(s, title, part, lines, reason, prev, start, cages), prev, start)
                     return f"Hint: {title}"
             if now is not None:
                 prev = now

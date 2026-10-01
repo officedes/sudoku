@@ -137,7 +137,9 @@ def _cage_hint(cs, ccls, lost, cands, board, before=None):
             for (r, c), n in zip(ccls, names) if board[r][c] == 0}
     fits = ", ".join("{" + ",".join(map(str, co)) + "}" for co in _cage_combos(board, cs, ccls, candidates=left))
     rem = cs - sum(board[r][c] for r, c in ccls)
-    title = f"Cage {cs} [{', '.join(names)}]: only {fits} still fit"
+    n_fit = fits.count("{")
+    title = (f"Cage {cs} [{', '.join(names)}]: only {fits} still fit" if len(fits) <= 28
+             else f"Cage {cs} [{', '.join(names)}]: {n_fit} combinations still fit")
     lines = [f"Cage {cs} covers {_list(names)}. With the digits its empty cells can still take, only "
              f"{fits} add up to {rem}{f' (the cage {cs} minus its placed digits)' if rem != cs else ''}."]
     for r, c, d in sorted(lost):
@@ -737,7 +739,32 @@ def play_mode(cages, solution, save_path=None):
         """
         nonlocal hints_used, hint_panel
         start = [[board[r][c] if board[r][c] == solution[r][c] else 0 for c in range(9)] for r in range(9)]
-        _, steps = _solve_and_explain(cages, board=start, stop_after=1)
+
+        def unseen_parts(s, prev, now):
+            """{key: [(r, c, d), ...]} of an elimination that the player's pencil
+            marks don't show yet and no hint has given; the explainer's re-filter
+            of every cage at once is split by cage, to be hinted one at a time."""
+            removed = [(int(k[1:]) - 1, _COL.index(k[0]), d)
+                       for k, ds in prev.items() for d in ds if d not in now.get(k, ds)]
+            bulk = s["text"].startswith("Cage combo filtering")
+            parts = {}
+            for r, c, d in removed:
+                if board[r][c] == 0 and (not pencil[r][c] or d in pencil[r][c]):
+                    parts.setdefault(cell_cage_map.get((r, c)) if bulk else None, []).append((r, c, d))
+            return {key: part for key, part in parts.items() if (s["text"], key) not in hinted_steps}
+
+        # Explain only as far as the first step worth showing: working out the
+        # moves after it (contradiction sweeps included) took seconds per hint
+        last = {"prev": None}
+
+        def worth_showing(s):
+            now, prev = s.get("candidates"), last["prev"]
+            if now is not None:
+                last["prev"] = now
+            return s["type"] == "placement" or (s["type"] == "elimination" and prev is not None
+                                                 and now is not None and bool(unseen_parts(s, prev, now)))
+
+        _, steps = _solve_and_explain(cages, board=start, stop_after=1, stop_when=worth_showing)
         prev = None
         for s in steps:
             now = s.get("candidates")
@@ -766,19 +793,7 @@ def play_mode(cages, solution, save_path=None):
                               "lines": [f"Place {v} in {_nm(r, c)} yourself when you're ready."] + lines}
                 return f"Hint: {s['text']}"
             if s["type"] == "elimination" and prev is not None and now is not None:
-                removed = [(int(k[1:]) - 1, _COL.index(k[0]), d)
-                           for k, ds in prev.items() for d in ds if d not in now.get(k, ds)]
-                # New to the player unless their pencil marks already rule it out
-                new = [(r, c, d) for r, c, d in removed
-                       if board[r][c] == 0 and (not pencil[r][c] or d in pencil[r][c])]
-                # The explainer's re-filter of every cage at once is hinted one cage at a time
-                bulk = s["text"].startswith("Cage combo filtering")
-                parts = {}
-                for r, c, d in new:
-                    parts.setdefault(cell_cage_map.get((r, c)) if bulk else None, []).append((r, c, d))
-                for key, part in parts.items():
-                    if (s["text"], key) in hinted_steps:
-                        continue
+                for key, part in unseen_parts(s, prev, now).items():
                     hinted_steps.add((s["text"], key))
                     batch = []
                     for r, c, d in part:

@@ -133,6 +133,28 @@ def advanced_steps(cages):
 # Detailed elimination steps (for visualizer)
 # =============================================================================
 
+class _Stop(Exception):
+    """Raised by a _StepLog once its stop_when says enough; unwinds to solve_and_explain."""
+
+
+class _StepLog(list):
+    """The explained steps. Every append is handed to `stop_when`, which can end
+    the solve right there; `forward` sends a nested round's steps into the
+    outer log instead, so each step is checked once."""
+
+    def __init__(self, stop_when=None, forward=None):
+        super().__init__()
+        self.stop_when = stop_when
+        self.forward = forward
+
+    def append(self, step):
+        super().append(step)
+        if self.forward is not None:
+            self.forward.append(step)
+        elif self.stop_when is not None and self.stop_when(step):
+            raise _Stop
+
+
 def _find_placement(board, candidates, initial):
     """Check for naked single or hidden single in the candidate grid."""
     for r in range(9):
@@ -163,8 +185,11 @@ def _find_placement(board, candidates, initial):
     return None
 
 
-def get_candidate_elimination_steps(board, cages, prior_refined=None):
-    """Run candidate elimination returning intermediate steps for the visualizer."""
+def get_candidate_elimination_steps(board, cages, prior_refined=None, into=None):
+    """Run candidate elimination returning intermediate steps for the visualizer.
+
+    `into` (solve_and_explain's step log) receives each step as it is made.
+    """
     candidates = build_candidates(board, cages)
     if prior_refined:
         for r in range(9):
@@ -173,7 +198,7 @@ def get_candidate_elimination_steps(board, cages, prior_refined=None):
                 if key in prior_refined and candidates[r][c]:
                     candidates[r][c] &= set(prior_refined[key])
     initial = {(r, c): set(candidates[r][c]) for r in range(9) for c in range(9) if candidates[r][c]}
-    steps = []
+    steps = _StepLog(forward=into)
 
     if prior_refined:
         removed = []
@@ -281,16 +306,26 @@ def get_candidate_elimination_steps(board, cages, prior_refined=None):
 # Step-by-step solver for visualizer
 # =============================================================================
 
-def solve_and_explain(cages, board=None, stop_after=None):
+def solve_and_explain(cages, board=None, stop_after=None, stop_when=None):
     """Solve a puzzle and return (board, steps) with candidates and explanations.
 
     `board` starts from a partly filled grid (it is copied, not changed);
-    `stop_after` stops once that many cells have been placed, which is how a
-    hint explains just the next move from the player's position.
+    `stop_after` stops once that many cells have been placed, and
+    `stop_when(step)` as soon as it returns True for a step just made - which
+    is how a hint explains just the next move from the player's position
+    without working out the moves after it.
     """
-    import io, sys
     board = [row[:] for row in board] if board else create_board()
-    steps = []
+    steps = _StepLog(stop_when)
+    try:
+        _explain(cages, board, steps, stop_after)
+    except _Stop:
+        pass
+    return board, steps
+
+
+def _explain(cages, board, steps, stop_after):
+    import io, sys
     placements = 0
 
     # Info steps
@@ -431,11 +466,9 @@ def solve_and_explain(cages, board=None, stop_after=None):
             continue
 
         prior = last_refined or (steps[-1].get("candidates", {}) if steps else {})
-        elim_steps = get_candidate_elimination_steps(board, cages, prior_refined=prior)
+        elim_steps = get_candidate_elimination_steps(board, cages, prior_refined=prior, into=steps)
         if not elim_steps:
             break
-        for es in elim_steps:
-            steps.append(es)
         last_with_cands = next((s for s in reversed(elim_steps) if s.get("candidates")), None)
         if last_with_cands:
             last_refined = last_with_cands["candidates"]
@@ -457,7 +490,6 @@ def solve_and_explain(cages, board=None, stop_after=None):
         else:
             break
 
-    return board, steps
 
 
 # =============================================================================

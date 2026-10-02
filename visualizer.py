@@ -1184,6 +1184,21 @@ def play_mode(cages, solution, save_path=None):
     def key_in(k):
         return tuple(k) if isinstance(k, list) else k
 
+    recorded = {"done": False}
+
+    def record_solve(elapsed):
+        """Append the solve to solved.jsonl next to the saves, once per game."""
+        if not save_path or recorded["done"]:
+            return
+        recorded["done"] = True
+        import datetime
+        entry = {"puzzle": os.path.splitext(os.path.basename(save_path))[0],
+                 "solved_at": datetime.datetime.now().isoformat(timespec="seconds"),
+                 "seconds": round(elapsed), "hints": hints_used}
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        with open(os.path.join(os.path.dirname(save_path), "solved.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+
     def save_progress():
         if not save_path:
             return
@@ -1668,6 +1683,7 @@ def play_mode(cages, solution, save_path=None):
                                 mins, secs = int(elapsed // 60), int(elapsed % 60)
                                 message = f"SOLVED! {mins}m{secs:02d}s, {hints_used} hints"
                                 msg_color = (0, 160, 0)
+                                record_solve(elapsed)
 
         # Multi-select forces pencil mode, but don't override back to false
         if len(selected) > 1:

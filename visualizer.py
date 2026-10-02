@@ -1070,7 +1070,7 @@ def play_mode(cages, solution, save_path=None):
                     reason = [x for x in _house(house) if x != (r, c)]
                 elif "cage deduction" in s["text"]:
                     reason = [tuple(x) for x in cages[cell_cage_map[(r, c)]][1] if tuple(x) != (r, c)]
-                hint_panel = {"cells": [(r, c)], "reason": reason, "removals": [], "title": s["text"],
+                hint_panel = {"cells": [(r, c)], "reason": reason, "removals": [], "title": s["text"], "step": s["text"],
                               "lines": [f"Place {v} in {_nm(r, c)} yourself when you're ready."] + lines}
                 open_walkthrough(s["text"], hint_frames(s, s["text"], [], lines, reason, prev or now, start, cages),
                                  prev or now, start)
@@ -1095,7 +1095,7 @@ def play_mode(cages, solution, save_path=None):
                         plain = explain_step(s["text"], part, prev, now, start, cages)
                         if plain:
                             title, lines, reason = plain
-                    hint_panel = {"cells": sorted({(r, c) for r, c, _ in part}), "reason": reason,
+                    hint_panel = {"cells": sorted({(r, c) for r, c, _ in part}), "reason": reason, "step": s["text"],
                                   "removals": part, "title": title, "lines": [_changes_line(part)] + lines}
                     open_walkthrough(title, hint_frames(s, title, part, lines, reason, prev, start, cages), prev, start)
                     return f"Hint: {title}"
@@ -1184,6 +1184,21 @@ def play_mode(cages, solution, save_path=None):
     def key_in(k):
         return tuple(k) if isinstance(k, list) else k
 
+    move_log = (os.path.join(os.path.dirname(save_path), "moves",
+                             os.path.splitext(os.path.basename(save_path))[0] + ".jsonl") if save_path else None)
+
+    def log_move(kind, **data):
+        """One line per move in saves/moves/<puzzle>.jsonl - what the player did
+        and when (seconds into the game) - to tailor puzzles to them later."""
+        if not move_log:
+            return
+        os.makedirs(os.path.dirname(move_log), exist_ok=True)
+        with open(move_log, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"t": round(_time.time() - start_time, 1), "move": kind, **data}) + "\n")
+
+    def names(cells_):
+        return [_nm(r, c) for r, c in sorted(cells_)]
+
     recorded = {"done": False}
 
     def record_solve(elapsed):
@@ -1198,6 +1213,7 @@ def play_mode(cages, solution, save_path=None):
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         with open(os.path.join(os.path.dirname(save_path), "solved.jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
+        log_move("solve", seconds=entry["seconds"], hints=hints_used)
 
     def save_progress():
         if not save_path:
@@ -1246,6 +1262,7 @@ def play_mode(cages, solution, save_path=None):
         except (OSError, ValueError, KeyError, TypeError) as e:
             message = f"Couldn't read the saved game ({e}); starting fresh"
     last_save = _time.time()
+    log_move("open", placed=sum(1 for row in board for v in row if v))
 
     while running:
         if _time.time() - last_save > 5:
@@ -1399,6 +1416,8 @@ def play_mode(cages, solution, save_path=None):
                                 if removed_count:
                                     message += f" (removed {removed_count} pencil marks)"
                             history.append(("combo_excl", ci, combo_t, was_excluded, pencil_changes))
+                            log_move("combo", area=key_out(ci), combo=sorted(combo_t),
+                                     ruled_out=not (was_excluded or not fits_pencils))
                             msg_color = (180, 80, 0)
                             break
                     else:
@@ -1412,10 +1431,15 @@ def play_mode(cages, solution, save_path=None):
                                     msg_color = (0, 120, 0) if pencil_mode else (60, 60, 80)
                                 elif btn_name == "Undo":
                                     result = do_undo()
+                                    if result:
+                                        log_move("undo")
                                     message = result or "Nothing to undo"
                                     msg_color = (60, 60, 80)
                                 elif btn_name == "Hint":
                                     result = do_hint()
+                                    if result:
+                                        log_move("hint", title=hint_panel["title"], step=hint_panel["step"],
+                                                 cells=names(hint_panel["cells"]))
                                     message = result or "No hints available"
                                     msg_color = (0, 80, 160) if result else (120, 120, 120)
                                 elif btn_name == "Check":
@@ -1424,6 +1448,7 @@ def play_mode(cages, solution, save_path=None):
                                         errs = sum(1 for r in range(9) for c in range(9)
                                                    if board[r][c] != 0 and board[r][c] != solution[r][c])
                                         message = f"{errs} errors" if errs else "No errors!"
+                                        log_move("check", errors=errs)
                                         msg_color = (180, 0, 0) if errs else (0, 130, 0)
                                     else:
                                         message = "Errors hidden"
@@ -1431,6 +1456,7 @@ def play_mode(cages, solution, save_path=None):
                                 elif btn_name == "Fill":
                                     if selected:
                                         cnt, ncages = do_auto_pencil()
+                                        log_move("fill", cells=cnt)
                                         message = f"Filled {cnt} cells in {ncages} cage(s)"
                                         msg_color = (0, 100, 0)
                                     else:
@@ -1439,6 +1465,7 @@ def play_mode(cages, solution, save_path=None):
                                 elif btn_name == "Fill All":
                                     selected = {(r, c) for r in range(9) for c in range(9) if board[r][c] == 0}
                                     cnt, ncages = do_auto_pencil()
+                                    log_move("fill_all", cells=cnt)
                                     selected = set()
                                     message = f"Filled all: {cnt} cells in {ncages} cages"
                                     msg_color = (0, 100, 0)
@@ -1454,12 +1481,14 @@ def play_mode(cages, solution, save_path=None):
                                 elif btn_name == "Del Mark":
                                     if selected_mark is not None and selected_mark < len(user_cages):
                                         delete_mark(selected_mark)
+                                        log_move("delete_mark")
                                         if not user_cages:
                                             marks_open = False
                                         message = "Mark deleted"
                                         msg_color = (60, 60, 80)
                                 elif btn_name == "Reset":
                                     do_reset()
+                                    log_move("reset")
                                     message = "Board reset!"
                                     msg_color = (60, 60, 80)
                                 break
@@ -1491,6 +1520,7 @@ def play_mode(cages, solution, save_path=None):
                                     "distinct": all(_sees(a, b) for a in mark_cells for b in mark_cells)}
                         next_mark_id += 1
                         user_cages.append(new_mark)
+                        log_move("mark", cells=names(mark_cells), sum=cage_sum_val)
                         marking_sum = None
                         marking_input = ""
                         # Auto-remove pencil marks that can't appear in any valid combo
@@ -1544,6 +1574,8 @@ def play_mode(cages, solution, save_path=None):
                     msg_color = (0, 120, 0) if pencil_mode else (60, 60, 80)
                 elif event.key == pygame.K_z and (pygame.key.get_mods() & pygame.KMOD_CTRL):
                     result = do_undo()
+                    if result:
+                        log_move("undo")
                     message = result or "Nothing to undo"
                     msg_color = (60, 60, 80)
                 elif not selected and event.key in (pygame.K_DELETE, pygame.K_BACKSPACE, pygame.K_0, pygame.K_KP_0):
@@ -1562,6 +1594,7 @@ def play_mode(cages, solution, save_path=None):
                             pencil[r][c] = set()
                     if batch:
                         history.append(("batch", batch))
+                        log_move("clear", cells=names({(e[1], e[2]) for e in batch}))
                     message = "Cleared"
                     msg_color = (60, 60, 80)
                 elif pygame.K_1 <= event.key <= pygame.K_9 or pygame.K_KP_1 <= event.key <= pygame.K_KP_9:
@@ -1594,6 +1627,8 @@ def play_mode(cages, solution, save_path=None):
                                 pencil[r][c].add(num)
                         if batch:
                             history.append(("batch", batch))
+                        if empty_sel:
+                            log_move("pencil", cells=names(empty_sel), digit=num, added=not all_have)
                         action = "Removed" if all_have else "Added"
                         message = f"{action} pencil {num} in {len(empty_sel)} cell(s)"
                         msg_color = (0, 120, 0)
@@ -1666,6 +1701,8 @@ def play_mode(cages, solution, save_path=None):
                                         keep_checking = True
                         if batch:
                             history.append(("batch", batch))
+                        log_move("place", cell=_nm(r, c), digit=num, correct=num == solution[r][c],
+                                 auto=auto_placed)
                         # Check correctness
                         if board[r][c] != solution[r][c]:
                             message = f"Wrong! {_COL[c]}{r+1} is not {num}"
@@ -2113,6 +2150,7 @@ def play_mode(cages, solution, save_path=None):
         pygame.display.flip()
         clock.tick(60)
 
+    log_move("close", placed=sum(1 for row in board for v in row if v))
     save_progress()
     pygame.quit()
 

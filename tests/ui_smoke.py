@@ -148,6 +148,32 @@ def main():
          21: ["shot:play_hint"]},
         lambda: visualizer.play_mode(hard_cages, hard_sol))
 
+    # Start screen: pick level 4 and its first tile; then "3" + Enter picks a random level-3 puzzle
+    import start_screen
+    tab_w = (580 - 2 * 20 - 3 * 8) // 4
+    picked = []
+    run({3: ["shot:start_screen"],
+         5: click((20 + 3 * (tab_w + 8) + 20, start_screen.TAB_Y + 20)),
+         7: ["shot:start_level4"],
+         9: click((20 + 30, start_screen.TILE_Y0 + 30))},
+        lambda: picked.append(start_screen.choose()))
+    run({3: key(pygame.K_3, "3"), 5: key(pygame.K_RETURN)}, lambda: picked.append(start_screen.choose()))
+    levels = start_screen._load_levels()
+    assert [levels[p[:-5]]["level"] for p in picked] == [4, 3], picked
+
+    # The app loop: start screen -> a game -> closing it lands back on the start screen.
+    # Saves go to tests/output so the player's real games are never touched.
+    real_saves = visualizer.SAVES_DIR
+    visualizer.SAVES_DIR = start_screen.SAVES_DIR = os.path.join(OUTPUT_DIR, "saves")
+    sys.argv = ["visualizer.py"]
+    try:
+        run({3: click((20 + 30, start_screen.TILE_Y0 + 30)), 8: [pygame.event.Event(pygame.QUIT)],
+             12: ["shot:start_after_game"]}, visualizer.main)
+    finally:
+        visualizer.SAVES_DIR = start_screen.SAVES_DIR = real_saves
+    assert os.path.exists(os.path.join(OUTPUT_DIR, "saves", "solved.jsonl")) or \
+        os.listdir(os.path.join(OUTPUT_DIR, "saves")), "the game should have saved its progress"
+
     script = {i: key(pygame.K_SPACE) for i in range(3, 43)}
     script[45] = ["shot:solver_view"]
     sys.argv = ["visualizer.py", "puzzle_026"]

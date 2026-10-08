@@ -2,6 +2,7 @@
 Killer Sudoku Visual Solver & Player
 
 Modes:
+  python visualizer.py                         Start screen: pick a level and a puzzle to play
   python visualizer.py puzzle_001              Step-through solver
   python visualizer.py puzzle_001 --play       Interactive play mode
   python visualizer.py puzzle_001 --print      Text walkthrough
@@ -2174,6 +2175,12 @@ def main():
     print_mode = "--print" in sys.argv
     play = "--play" in sys.argv
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if not args and not print_mode:
+        from start_screen import choose
+        while (filename := choose()):
+            cages, solution = load_puzzle(filename)
+            play_mode(cages, solution, save_path=os.path.join(SAVES_DIR, filename))
+        return
     if args:
         filename = args[0]
         if not filename.endswith(".json"):

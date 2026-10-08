@@ -161,6 +161,30 @@ def main():
     levels = start_screen._load_levels()
     assert [levels[p[:-5]]["level"] for p in picked] == [4, 3], picked
 
+    # New puzzle: a stand-in generator that "saves" puzzle_019 after a few frames
+    class FakeProc:
+        def __init__(self, log):
+            self.log, self.polls = log, 0
+
+        def poll(self):
+            self.polls += 1
+            if self.polls < 4:
+                return None
+            self.log.write(b"Saved to C:\\x\\puzzles\\puzzle_019.json\n")
+            return 0
+
+    spawned = []
+    real_spawn = start_screen._spawn_generator
+    start_screen._spawn_generator = lambda level, log: spawned.append(level) or FakeProc(log)
+    new_btn = (580 - 20 - 40, start_screen.BTN_Y + 20)
+    try:
+        run({3: key(pygame.K_1, "1"), 4: click(new_btn), 5: ["shot:start_generating"], 12: ["shot:start_fresh"]},
+            start_screen.choose)
+    finally:
+        start_screen._spawn_generator = real_spawn
+    assert spawned == [1] and start_screen._GENERATOR.result == (1, "puzzle_019.json"), spawned
+    start_screen._GENERATOR.result = None
+
     # The app loop: start screen -> a game -> closing it lands back on the start screen.
     # Saves go to tests/output so the player's real games are never touched.
     real_saves = visualizer.SAVES_DIR

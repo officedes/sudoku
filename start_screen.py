@@ -16,6 +16,11 @@ import io
 import json
 import os
 import random
+import re
+import subprocess
+import sys
+import tempfile
+import time
 
 import pygame
 
@@ -37,8 +42,9 @@ PAD = 20
 TAB_Y, TAB_H = 196, 92
 TILE_Y0 = 352
 TILE_W, TILE_H, TILE_GAP, COLS = 127, 76, 10, 4
-LIST_BOTTOM = H - 76
+LIST_BOTTOM = H - 96
 BTN_Y, BTN_H = H - 60, 40
+ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
 def _cages_hash(cages):
@@ -116,6 +122,45 @@ class _Rater:
 
 
 _RATER = _Rater()
+
+
+def _spawn_generator(level, log):
+    """main.py's generator as its own process: it runs its own worker pool, and
+    a game can be played meanwhile. Left running if the app closes - it only
+    saves its puzzle."""
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    return subprocess.Popen([sys.executable, os.path.join(ROOT, "main.py"), "generate", "--level", str(level)],
+                            cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, env=env)
+
+
+class _Generator:
+    """One background puzzle generation at a time, kept across games."""
+
+    def __init__(self):
+        self.proc = self.log = None
+        self.level = self.started = None
+        self.result = None  # (level, file name or None) of the last finished run
+
+    def start(self, level):
+        if self.proc:
+            return
+        self.log = tempfile.TemporaryFile()  # a file, not a pipe: the output can't fill up and stall it
+        self.level, self.started, self.result = level, time.time(), None
+        self.proc = _spawn_generator(level, self.log)
+
+    def poll(self):
+        """True once when the running generation has just finished."""
+        if not self.proc or self.proc.poll() is None:
+            return False
+        self.log.seek(0)
+        m = re.search(r"Saved to .*?(puzzle_\d+\.json)", self.log.read().decode("utf-8", "replace"))
+        self.log.close()
+        self.result = (self.level, m.group(1) if m else None)
+        self.proc = self.log = None
+        return True
+
+
+_GENERATOR = _Generator()
 
 
 def _progress():
@@ -214,13 +259,19 @@ def choose():
     font_btn = pygame.font.SysFont("segoeui", 16, bold=True)
 
     puzzles = {}
-    for name in _puzzle_files():
-        try:
-            cages, _ = load_puzzle(name)
-        except (OSError, ValueError, KeyError):
-            continue
-        puzzles[name] = (cages, _cages_hash(cages))
-    _RATER.start(puzzles)
+
+    def scan():
+        for name in _puzzle_files():
+            if name in puzzles:
+                continue
+            try:
+                cages, _ = load_puzzle(name)
+            except (OSError, ValueError, KeyError):
+                continue
+            puzzles[name] = (cages, _cages_hash(cages))
+        _RATER.start(puzzles)
+
+    scan()
     thumbs = {}
     solved, in_progress = _progress()
 
@@ -253,6 +304,7 @@ def choose():
 
     continue_rect = pygame.Rect(PAD, 112, W - 2 * PAD, 64)
     random_rect = pygame.Rect(PAD, BTN_Y, 220, BTN_H)
+    new_rect = pygame.Rect(random_rect.right + 12, BTN_Y, W - PAD - random_rect.right - 12, BTN_H)
 
     def random_pick():
         pool = [n for n in groups[level] if n not in solved] or groups[level]
@@ -260,8 +312,11 @@ def choose():
 
     clock = pygame.time.Clock()
     while True:
+        if _GENERATOR.poll() and _GENERATOR.result[1]:
+            scan()
         if _RATER.harvest():
             groups = by_level()
+        fresh = _GENERATOR.result[1] if _GENERATOR.result else None
         names = groups[level]
         rows = (len(names) + COLS - 1) // COLS
         max_scroll = max(0, TILE_Y0 + rows * (TILE_H + TILE_GAP) - LIST_BOTTOM)
@@ -294,6 +349,8 @@ def choose():
                     pick = random_pick()
                     if pick:
                         return pick
+                if new_rect.collidepoint(pos):
+                    _GENERATOR.start(level)
                 if TILE_Y0 <= pos[1] < LIST_BOTTOM:
                     for i, name in enumerate(names):
                         if tile_rect(i).collidepoint(pos):
@@ -361,7 +418,9 @@ def choose():
                 edge, status, color = T["hl"], f"{in_progress[name][0]}/81", T["hl"]
             else:
                 edge, status, color = T["chip_edge"], "new", T["muted"]
-            pygame.draw.rect(screen, edge, rect, 2 if hover else 1, border_radius=8)
+            if name == fresh and name not in solved and name not in in_progress:
+                edge, status, color = T["info"], "fresh", T["info"]
+            pygame.draw.rect(screen, edge, rect, 2 if hover or name == fresh else 1, border_radius=8)
             if name not in thumbs:
                 thumbs[name] = _thumbnail(puzzles[name][0], 58)
             screen.blit(thumbs[name], (rect.x + 9, rect.y + 9))
@@ -381,9 +440,23 @@ def choose():
         pygame.draw.rect(screen, T["btn_hover"] if hover else T["btn"], random_rect, border_radius=8)
         pygame.draw.rect(screen, T["chip_edge"], random_rect, 1, border_radius=8)
         _text(screen, font_btn, "Random unsolved", T["label"], random_rect.center, "center")
-        status = (f"Rating {len(_RATER.pending)} puzzle{'s' if len(_RATER.pending) != 1 else ''}..."
-                  if _RATER.pending else f"1-4 level  ·  Enter random  ·  {rated} rated")
-        _text(screen, font_small, status, T["muted"], (W - PAD, BTN_Y + BTN_H // 2), "midright")
+        running = _GENERATOR.proc is not None
+        hover = new_rect.collidepoint(mouse) and not running
+        pygame.draw.rect(screen, T["btn_hover"] if hover else T["btn"], new_rect, border_radius=8)
+        pygame.draw.rect(screen, T["hl"] if running else T["chip_edge"], new_rect, 1, border_radius=8)
+        label = (f"Generating level {_GENERATOR.level}...  {_clock(time.time() - _GENERATOR.started)}"
+                 if running else f"New level {level} puzzle")
+        _text(screen, font_btn, label, T["hl"] if running else T["label"], new_rect.center, "center")
+
+        if _RATER.pending:
+            status = f"Rating {len(_RATER.pending)} puzzle{'s' if len(_RATER.pending) != 1 else ''}..."
+        elif _GENERATOR.result and not running:
+            lv, made = _GENERATOR.result
+            status = (f"New puzzle {made[7:-5]} added to level {lv}" if made
+                      else f"Couldn't generate a level {lv} puzzle - try again")
+        else:
+            status = f"1-4 level  ·  Enter random  ·  {rated} rated"
+        _text(screen, font_small, status, T["muted"], (W - PAD, BTN_Y - 12), "midright")
 
         if screen is not window:
             pygame.transform.smoothscale(screen, window.get_size(), window)

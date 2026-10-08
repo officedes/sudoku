@@ -8,6 +8,7 @@ The layout numbers below mirror play_mode's portrait layout.
 
 import json
 import os
+import shutil
 import sys
 
 os.environ["SDL_VIDEODRIVER"] = "dummy"
@@ -144,10 +145,8 @@ def main():
 
     # Fill on a cell in no cage (puzzle_026 leaves C6 and F3 uncaged) gives it row/column/box candidates
     fill_saves = os.path.join(OUTPUT_DIR, "fill_saves")
-    os.makedirs(fill_saves, exist_ok=True)
+    shutil.rmtree(fill_saves, ignore_errors=True)  # a leftover save would resume with the marks already in
     moves = os.path.join(fill_saves, "moves", "puzzle_026.jsonl")
-    if os.path.exists(moves):
-        os.remove(moves)
     cages26, sol26 = load_puzzle("puzzle_026.json")
     run({3: click(cell_pt(5, 2)), 6: click(btn_pt("Fill")), 8: click(btn_pt("Fill All")), 10: ["shot:play_fill_uncaged"]},
         lambda: visualizer.play_mode(cages26, sol26, save_path=os.path.join(fill_saves, "puzzle_026.json")))

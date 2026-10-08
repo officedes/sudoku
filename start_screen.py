@@ -179,20 +179,27 @@ class _Generator:
 _GENERATOR = _Generator()
 
 
-def _progress():
-    """(solved: name -> best seconds, in_progress: name -> (filled, elapsed, mtime))."""
-    solved = {}
+def _solve_log():
+    """Every recorded solve, oldest first: {"puzzle", "solved_at", "seconds", "hints"}."""
+    log = []
     try:
         with open(os.path.join(SAVES_DIR, "solved.jsonl"), encoding="utf-8") as f:
             for line in f:
                 try:
-                    e = json.loads(line)
+                    log.append(json.loads(line))
                 except ValueError:
                     continue
-                name = e["puzzle"] + ".json"
-                solved[name] = min(solved.get(name, e["seconds"]), e["seconds"])
     except OSError:
         pass
+    return log
+
+
+def _progress():
+    """(solved: name -> best seconds, in_progress: name -> (filled, elapsed, mtime))."""
+    solved = {}
+    for e in _solve_log():
+        name = e["puzzle"] + ".json"
+        solved[name] = min(solved.get(name, e["seconds"]), e["seconds"])
     in_progress = {}
     if os.path.isdir(SAVES_DIR):
         for f in os.listdir(SAVES_DIR):
@@ -243,6 +250,15 @@ def _thumbnail(cages, size):
 def _check(screen, color, x, cy):
     """A tick: segoeui has no glyph for one."""
     pygame.draw.lines(screen, color, False, [(x, cy), (x + 4, cy + 4), (x + 11, cy - 4)], 2)
+
+
+def _when(iso):
+    """'2026-10-08T14:02:11' -> '8 Oct 14:02'."""
+    try:
+        t = time.strptime(iso[:16], "%Y-%m-%dT%H:%M")
+    except (TypeError, ValueError):
+        return ""
+    return f"{t.tm_mday} {time.strftime('%b', t)} {iso[11:16]}"
 
 
 def _text(screen, font, text, color, pos, anchor="topleft"):
@@ -321,8 +337,61 @@ def choose():
         return pygame.Rect(PAD + (lv - 1) * (w + 8), TAB_Y, w, TAB_H)
 
     continue_rect = pygame.Rect(PAD, 112, W - 2 * PAD, 64)
+    stats_rect = pygame.Rect(W - PAD - 92, 32, 92, 34)
+    view = "levels"
     random_rect = pygame.Rect(PAD, BTN_Y, 220, BTN_H)
     new_rect = pygame.Rect(random_rect.right + 12, BTN_Y, W - PAD - random_rect.right - 12, BTN_H)
+
+    def draw_stats():
+        log = _solve_log()
+        level_of = {name: _RATER.level(name, h) for name, (_, h) in puzzles.items()}
+        played = sum(e["seconds"] for e in log) + sum(p[1] for p in in_progress.values())
+        cards = [("Solved", f"{len({e['puzzle'] for e in log} & {n[:-5] for n in puzzles})}/{len(puzzles)}"),
+                 ("Time played", _clock(played)),
+                 ("Hints used", str(sum(e.get("hints", 0) for e in log)))]
+        cw = (W - 2 * PAD - 2 * 10) // 3
+        for i, (title, value) in enumerate(cards):
+            rect = pygame.Rect(PAD + i * (cw + 10), 96, cw, 70)
+            pygame.draw.rect(screen, T["chip"], rect, border_radius=10)
+            pygame.draw.rect(screen, T["chip_edge"], rect, 1, border_radius=10)
+            _text(screen, font_small, title, T["muted"], (rect.x + 12, rect.y + 8))
+            _text(screen, font_tab_num, value, T["label"], (rect.x + 12, rect.y + 26))
+
+        cols = [(PAD, "Level"), (PAD + 210, "Solved"), (PAD + 290, "Best"), (PAD + 370, "Average"),
+                (PAD + 460, "Hints")]
+        y = 192
+        for x, head in cols:
+            _text(screen, font_small, head, T["muted"], (x, y))
+        pygame.draw.line(screen, T["grid"], (PAD, y + 22), (W - PAD, y + 22))
+        for lv, title in LEVEL_NAMES.items():
+            y += 34
+            runs = [e for e in log if level_of.get(e["puzzle"] + ".json") == lv]
+            done = {e["puzzle"] for e in runs}
+            times = [e["seconds"] for e in runs]
+            cells = [f"{lv}  {title}", f"{len(done)}/{len(groups[lv])}",
+                     _clock(min(times)) if times else "-", _clock(sum(times) / len(times)) if times else "-",
+                     f"{sum(e.get('hints', 0) for e in runs) / len(runs):.1f}" if runs else "-"]
+            for (x, _), cell in zip(cols, cells):
+                _text(screen, font_tab if x == PAD else font_sub, cell, T["text"], (x, y + 2))
+
+        y += 58
+        _text(screen, font_btn, "Recent solves", T["label"], (PAD, y))
+        y += 32
+        if not log:
+            _text(screen, font_sub, "Nothing solved yet - finish a puzzle and it shows up here.", T["muted"], (PAD, y))
+        for e in reversed(log[-10:]):
+            name = e["puzzle"] + ".json"
+            lv = level_of.get(name)
+            pygame.draw.rect(screen, T["btn"], (PAD, y, W - 2 * PAD, 34), border_radius=6)
+            _check(screen, T["place"], PAD + 10, y + 17)
+            label = name[7:-5] if name.startswith("puzzle_") else e["puzzle"]
+            _text(screen, font_btn, label, T["label"], (PAD + 32, y + 6))
+            _text(screen, font_small, f"level {lv}" if lv else "", T["muted"], (PAD + 90, y + 9))
+            _text(screen, font_sub, _clock(e["seconds"]), T["place"], (PAD + 200, y + 7))
+            hints = e.get("hints", 0)
+            _text(screen, font_small, f"{hints} hint{'s' if hints != 1 else ''}", T["muted"], (PAD + 290, y + 9))
+            _text(screen, font_small, _when(e.get("solved_at")), T["muted"], (W - PAD - 10, y + 9), "topright")
+            y += 40
 
     def random_pick():
         pool = [n for n in groups[level] if n not in solved] or groups[level]
@@ -344,6 +413,16 @@ def choose():
             if event.type == pygame.QUIT:
                 _RATER.close()
                 return None
+            if view == "stats":
+                if (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE) or (
+                        event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
+                        and stats_rect.collidepoint(to_design(event.pos))):
+                    view = "levels"
+                continue
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 \
+                    and stats_rect.collidepoint(to_design(event.pos)):
+                view = "stats"
+                continue
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     _RATER.close()
@@ -376,6 +455,17 @@ def choose():
 
         screen.fill(T["bg"])
         _text(screen, font_title, "Killer Sudoku", T["label"], (PAD, 26))
+        hover = stats_rect.collidepoint(mouse)
+        pygame.draw.rect(screen, T["btn_hover"] if hover else T["btn"], stats_rect, border_radius=8)
+        pygame.draw.rect(screen, T["chip_edge"], stats_rect, 1, border_radius=8)
+        _text(screen, font_btn, "Back" if view == "stats" else "Stats", T["label"], stats_rect.center, "center")
+        if view == "stats":
+            draw_stats()
+            if screen is not window:
+                pygame.transform.smoothscale(screen, window.get_size(), window)
+            pygame.display.flip()
+            clock.tick(30)
+            continue
         rated = sum(len(g) for g in groups.values())
         sub = f"{len(puzzles)} puzzles  ·  {sum(1 for n in puzzles if n in solved)} solved"
         if in_progress:

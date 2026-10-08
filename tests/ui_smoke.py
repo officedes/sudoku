@@ -185,6 +185,23 @@ def main():
     assert spawned == [1] and start_screen._GENERATOR.result == (1, "puzzle_019.json"), spawned
     start_screen._GENERATOR.result = None
 
+    # Stats view over a sample solve log (kept in tests/output), then Back
+    import json
+    fake_saves = os.path.join(OUTPUT_DIR, "stats_saves")
+    os.makedirs(fake_saves, exist_ok=True)
+    with open(os.path.join(fake_saves, "solved.jsonl"), "w") as f:
+        for p, t, sec, h in [("puzzle_019", "2026-10-02T19:40:10", 410, 0), ("puzzle_007", "2026-10-03T21:12:00", 1260, 1),
+                             ("puzzle_045", "2026-10-07T20:02:00", 5420, 6), ("puzzle_007", "2026-10-08T09:15:00", 845, 0)]:
+            f.write(json.dumps({"puzzle": p, "solved_at": t, "seconds": sec, "hints": h}) + "\n")
+    real_saves = start_screen.SAVES_DIR
+    start_screen.SAVES_DIR = fake_saves
+    stats_btn = (580 - 20 - 40, 48)
+    try:
+        run({3: click(stats_btn), 6: ["shot:start_stats"], 8: key(pygame.K_ESCAPE), 10: ["shot:start_stats_back"]},
+            start_screen.choose)
+    finally:
+        start_screen.SAVES_DIR = real_saves
+
     # The app loop: start screen -> a game -> closing it lands back on the start screen.
     # Saves go to tests/output so the player's real games are never touched.
     real_saves = visualizer.SAVES_DIR

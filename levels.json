@@ -1,206 +1,308 @@
 {
  "example": {
   "hash": "c93cb6cee6afe4a8",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 78
  },
  "puzzle_001": {
   "hash": "3b81bbaa060ff0c4",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 83
  },
  "puzzle_002": {
   "hash": "0b9547ad9ef8f2be",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 86
  },
  "puzzle_003": {
   "hash": "55d60ad58a97e746",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 89
  },
  "puzzle_004": {
   "hash": "f93d8feaacadedb5",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 92
  },
  "puzzle_005": {
   "hash": "1283eeab4d19842e",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 84
  },
  "puzzle_006": {
   "hash": "40116cd64499719d",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 100
  },
  "puzzle_007": {
   "hash": "5ca53e63b89a9023",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 81
  },
  "puzzle_008": {
   "hash": "38192e38b98571e0",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 99
  },
  "puzzle_009": {
   "hash": "84cbb0621b66ef8e",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 92
  },
  "puzzle_010": {
   "hash": "0dcda9701864ff9d",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 96
  },
  "puzzle_011": {
   "hash": "e24daba94f2bc55b",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 89
  },
  "puzzle_012": {
   "hash": "34482c26f44ce2e6",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 92
  },
  "puzzle_013": {
   "hash": "62db350e666756a0",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 91
  },
  "puzzle_014": {
   "hash": "fc3a2ec10b3155b3",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 89
  },
  "puzzle_015": {
   "hash": "7ae853cd23d190a5",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 95
  },
  "puzzle_016": {
   "hash": "ea4eed9317cd28a3",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 84
  },
  "puzzle_017": {
   "hash": "7a1f151a63b1dbcb",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 89
  },
  "puzzle_018": {
   "hash": "c73dea50737f1575",
-  "level": 2
+  "level": 2,
+  "advanced": 0,
+  "eliminations": 89
  },
  "puzzle_019": {
   "hash": "87dcdaa6c754548d",
-  "level": 1
+  "level": 1,
+  "advanced": 0,
+  "eliminations": 92
  },
  "puzzle_025": {
   "hash": "f3205305db2f4e70",
-  "level": 3
+  "level": 3,
+  "advanced": 6,
+  "eliminations": 93
  },
  "puzzle_026": {
   "hash": "a97b8ac3b6d1635e",
-  "level": 3
+  "level": 3,
+  "advanced": 0,
+  "eliminations": 91
  },
  "puzzle_027": {
   "hash": "9a3b41b27b6e9eab",
-  "level": 3
+  "level": 3,
+  "advanced": 7,
+  "eliminations": 107
  },
  "puzzle_028": {
   "hash": "4592b296e1be3c15",
-  "level": 3
+  "level": 3,
+  "advanced": 26,
+  "eliminations": 138
  },
  "puzzle_032": {
   "hash": "9cf7be009f334a5c",
-  "level": 3
+  "level": 3,
+  "advanced": 19,
+  "eliminations": 105
  },
  "puzzle_033": {
   "hash": "3bff05e8698d9ace",
-  "level": 4
+  "level": 4,
+  "advanced": 55,
+  "eliminations": 151
  },
  "puzzle_034": {
   "hash": "fae85ba2eed6576c",
-  "level": 4
+  "level": 4,
+  "advanced": 48,
+  "eliminations": 131
  },
  "puzzle_035": {
   "hash": "07aceaa7dc869769",
-  "level": 3
+  "level": 3,
+  "advanced": 23,
+  "eliminations": 130
  },
  "puzzle_036": {
   "hash": "958c7158819b580e",
-  "level": 3
+  "level": 3,
+  "advanced": 7,
+  "eliminations": 95
  },
  "puzzle_037": {
   "hash": "b887b3303e266539",
-  "level": 3
+  "level": 3,
+  "advanced": 5,
+  "eliminations": 83
  },
  "puzzle_038": {
   "hash": "54809e7d574e0ae3",
-  "level": 3
+  "level": 3,
+  "advanced": 27,
+  "eliminations": 120
  },
  "puzzle_039": {
   "hash": "8c57bb4c6df32e37",
-  "level": 3
+  "level": 3,
+  "advanced": 13,
+  "eliminations": 116
  },
  "puzzle_040": {
   "hash": "86ec175a5fbd62b0",
-  "level": 3
+  "level": 3,
+  "advanced": 40,
+  "eliminations": 140
  },
  "puzzle_041": {
   "hash": "5c45e916b8df0242",
-  "level": 3
+  "level": 3,
+  "advanced": 6,
+  "eliminations": 108
  },
  "puzzle_042": {
   "hash": "3d09d97639fd11c0",
-  "level": 4
+  "level": 4,
+  "advanced": 71,
+  "eliminations": 169
  },
  "puzzle_043": {
   "hash": "8c74034672c36cd7",
-  "level": 4
+  "level": 4,
+  "advanced": 62,
+  "eliminations": 152
  },
  "puzzle_044": {
   "hash": "a2be2ed22e5f82f5",
-  "level": 4
+  "level": 4,
+  "advanced": 48,
+  "eliminations": 141
  },
  "puzzle_045": {
   "hash": "0b849b7ed3f925b2",
-  "level": 4
+  "level": 4,
+  "advanced": 43,
+  "eliminations": 125
  },
  "puzzle_046": {
   "hash": "dfdda369a527b3e2",
-  "level": 4
+  "level": 4,
+  "advanced": 65,
+  "eliminations": 161
  },
  "puzzle_047": {
   "hash": "4ec2cae8b543e4aa",
-  "level": 4
+  "level": 4,
+  "advanced": 136,
+  "eliminations": 224
  },
  "puzzle_048": {
   "hash": "e70b9573dbf0c455",
-  "level": 3
+  "level": 3,
+  "advanced": 0,
+  "eliminations": 92
  },
  "puzzle_049": {
   "hash": "0bef78a1b2008bad",
-  "level": 3
+  "level": 3,
+  "advanced": 27,
+  "eliminations": 142
  },
  "puzzle_050": {
   "hash": "9258dbf76551a6f9",
-  "level": 3
+  "level": 3,
+  "advanced": 28,
+  "eliminations": 117
  },
  "puzzle_051": {
   "hash": "6e8cd82b37505ef8",
-  "level": 3
+  "level": 3,
+  "advanced": 55,
+  "eliminations": 166
  },
  "puzzle_052": {
   "hash": "e8bfd5540287578b",
-  "level": 4
+  "level": 4,
+  "advanced": 131,
+  "eliminations": 211
  },
  "puzzle_053": {
   "hash": "954e72abe7b3f1b3",
-  "level": 4
+  "level": 4,
+  "advanced": 53,
+  "eliminations": 163
  },
  "puzzle_054": {
   "hash": "8fca3f34cebb05fb",
-  "level": 3
+  "level": 3,
+  "advanced": 10,
+  "eliminations": 103
  },
  "puzzle_055": {
   "hash": "272a7a0735ac8211",
-  "level": 3
+  "level": 3,
+  "advanced": 10,
+  "eliminations": 131
  },
  "puzzle_056": {
   "hash": "370cc7db075130fe",
-  "level": 3
+  "level": 3,
+  "advanced": 9,
+  "eliminations": 107
  },
  "puzzle_057": {
   "hash": "29a4775e61d3d632",
-  "level": 3
+  "level": 3,
+  "advanced": 14,
+  "eliminations": 134
  },
  "puzzle_058": {
   "hash": "7613a7272287b8f0",
-  "level": 3
+  "level": 3,
+  "advanced": 2,
+  "eliminations": 90
  }
 }

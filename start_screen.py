@@ -24,7 +24,7 @@ import time
 
 import pygame
 
-from killer.solver import LEVEL_NAMES, required_level
+from killer.solver import ADVANCED_STEP_PREFIXES, LEVEL_NAMES, required_level, solve_and_explain
 from main import DEFAULT_WORKERS, PUZZLES_DIR, load_puzzle
 from visualizer import SAVES_DIR, THEME
 
@@ -53,9 +53,17 @@ def _cages_hash(cages):
 
 
 def _rate(cages):
-    """required_level without the strategies' explanation printing."""
+    """Level, plus the explained solve's advanced and total elimination steps -
+    the order within a level (levels 1-2 never take an advanced step).
+    Without the strategies' explanation printing."""
     with contextlib.redirect_stdout(io.StringIO()):
-        return required_level(cages)
+        level = required_level(cages)
+        if not level:
+            return {"level": None, "advanced": None, "eliminations": None}
+        _, steps = solve_and_explain(cages)
+    elims = [st["text"] for st in steps if st["type"] == "elimination"]
+    return {"level": level, "advanced": sum(t.startswith(ADVANCED_STEP_PREFIXES) for t in elims),
+            "eliminations": len(elims)}
 
 
 def _puzzle_files():
@@ -88,7 +96,7 @@ class _Rater:
 
     def start(self, puzzles):
         stale = [(name, h, cages) for name, (cages, h) in puzzles.items()
-                 if self.levels.get(name[:-5], {}).get("hash") != h
+                 if not self._current(name, h)
                  and name not in {n for n, _ in self.pending.values()}]
         if not stale:
             return
@@ -102,17 +110,25 @@ class _Rater:
         for f in done:
             name, h = self.pending.pop(f)
             try:
-                level = f.result()
+                rating = f.result()
             except Exception:  # a crashed worker leaves the puzzle unrated, not the menu dead
                 continue
-            self.levels[name[:-5]] = {"hash": h, "level": level}
+            self.levels[name[:-5]] = {"hash": h, **rating}
         if done:
             _save_levels(self.levels)
         return bool(done)
 
-    def level(self, name, h):
+    def _current(self, name, h):
         entry = self.levels.get(name[:-5])
-        return entry["level"] if entry and entry.get("hash") == h else None
+        return entry if entry and entry.get("hash") == h and "eliminations" in entry else None
+
+    def level(self, name, h):
+        entry = self._current(name, h)
+        return entry["level"] if entry else None
+
+    def hardness(self, name, h):
+        entry = self._current(name, h)
+        return (entry["advanced"] or 0, entry["eliminations"] or 0) if entry else (0, 0)
 
     def close(self):
         if self.pool:
@@ -281,6 +297,8 @@ def choose():
             lv = _RATER.level(name, h)
             if lv in groups:
                 groups[lv].append(name)
+        for lv in groups:  # easiest first
+            groups[lv].sort(key=lambda n: (_RATER.hardness(n, puzzles[n][1]), n))
         return groups
 
     groups = by_level()
@@ -399,7 +417,7 @@ def choose():
                 else:
                     line = trial
             _text(screen, font_tab, line, T["text"], (rect.x + 12, y))
-        _text(screen, font_small, LEVEL_BLURBS[level], T["muted"], (PAD, TAB_Y + TAB_H + 12))
+        _text(screen, font_small, LEVEL_BLURBS[level] + "  Easiest first.", T["muted"], (PAD, TAB_Y + TAB_H + 12))
 
         clip = screen.get_clip()
         screen.set_clip(pygame.Rect(0, TILE_Y0 - 6, W, LIST_BOTTOM - TILE_Y0 + 6))

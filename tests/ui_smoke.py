@@ -6,6 +6,7 @@ The layout numbers below mirror play_mode's portrait layout.
     python tests/ui_smoke.py
 """
 
+import json
 import os
 import sys
 
@@ -141,6 +142,19 @@ def main():
          16: ["shot:play_highlight"]},
         lambda: visualizer.play_mode(cages, sol))
 
+    # Fill on a cell in no cage (puzzle_026 leaves C6 and F3 uncaged) gives it row/column/box candidates
+    fill_saves = os.path.join(OUTPUT_DIR, "fill_saves")
+    os.makedirs(fill_saves, exist_ok=True)
+    moves = os.path.join(fill_saves, "moves", "puzzle_026.jsonl")
+    if os.path.exists(moves):
+        os.remove(moves)
+    cages26, sol26 = load_puzzle("puzzle_026.json")
+    run({3: click(cell_pt(5, 2)), 6: click(btn_pt("Fill")), 8: click(btn_pt("Fill All")), 10: ["shot:play_fill_uncaged"]},
+        lambda: visualizer.play_mode(cages26, sol26, save_path=os.path.join(fill_saves, "puzzle_026.json")))
+    with open(moves) as f:
+        fills = [json.loads(line) for line in f if '"fill' in line]
+    assert [(m["move"], m["cells"]) for m in fills] == [("fill", 1), ("fill_all", 80)], fills
+
     hard_cages, hard_sol = load_puzzle("puzzle_034.json")
     run({3: click(btn_pt("Hint")),
          10: click(btn_pt("Hint")), 12: key(pygame.K_SPACE), 14: click(btn_pt("Hint")),
@@ -186,7 +200,6 @@ def main():
     start_screen._GENERATOR.result = None
 
     # Stats view over a sample solve log (kept in tests/output), then Back
-    import json
     fake_saves = os.path.join(OUTPUT_DIR, "stats_saves")
     os.makedirs(fake_saves, exist_ok=True)
     with open(os.path.join(fake_saves, "solved.jsonl"), "w") as f:

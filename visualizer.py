@@ -987,6 +987,15 @@ def play_mode(cages, solution, save_path=None):
                     batch.append(("pencil_auto", cr, cc, board[cr][cc], set(pencil[cr][cc])))
                     pencil[cr][cc] = new_p
                     filled_count += 1
+        if selected_mark is None:
+            # A cell in no cage has no sum to narrow it: row, column and box decide
+            for cr, cc in sorted(selected):
+                if board[cr][cc] == 0 and (cr, cc) not in cell_cage_map:
+                    new_p = get_possible_values(board, cr, cc)
+                    if new_p != pencil[cr][cc]:
+                        batch.append(("pencil_auto", cr, cc, board[cr][cc], set(pencil[cr][cc])))
+                        pencil[cr][cc] = new_p
+                        filled_count += 1
         if batch:
             history.append(("batch", batch))
         return filled_count, len(targets)
@@ -1458,7 +1467,8 @@ def play_mode(cages, solution, save_path=None):
                                     if selected:
                                         cnt, ncages = do_auto_pencil()
                                         log_move("fill", cells=cnt)
-                                        message = f"Filled {cnt} cells in {ncages} cage(s)"
+                                        message = f"Filled {cnt} cell{'s' if cnt != 1 else ''}" + (
+                                            f" in {ncages} cage{'s' if ncages != 1 else ''}" if ncages else "")
                                         msg_color = (0, 100, 0)
                                     else:
                                         message = "Right-click a cage first"

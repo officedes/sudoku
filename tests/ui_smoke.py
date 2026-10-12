@@ -154,6 +154,24 @@ def main():
         fills = [json.loads(line) for line in f if '"fill' in line]
     assert [(m["move"], m["cells"]) for m in fills] == [("fill", 1), ("fill_all", 80)], fills
 
+    # Last-cell autofill chains across the grid: with A1, E1, E6 open, placing A1 fills E1 (last in
+    # row 1), which leaves E6 last in column E - not a house of A1, so it needs the whole-grid scan
+    auto_saves = os.path.join(OUTPUT_DIR, "auto_saves")
+    shutil.rmtree(auto_saves, ignore_errors=True)
+    os.makedirs(auto_saves)
+    board = [row[:] for row in sol]
+    for r, c in [(0, 0), (0, 4), (5, 4)]:
+        board[r][c] = 0
+    with open(os.path.join(auto_saves, "puzzle_032.json"), "w") as f:
+        json.dump({"board": board, "pencil": [[[] for _ in range(9)] for _ in range(9)], "elapsed": 0,
+                   "hints_used": 0, "cage_excluded": [], "cage_excluded_combos": [], "user_cages": [],
+                   "next_mark_id": 0, "hinted_steps": []}, f)
+    run({3: click(cell_pt(0, 0)), 6: click(pad_pt(sol[0][0], 0)), 9: ["shot:play_auto_chain"]},
+        lambda: visualizer.play_mode(cages, sol, save_path=os.path.join(auto_saves, "puzzle_032.json")))
+    with open(os.path.join(auto_saves, "moves", "puzzle_032.jsonl")) as f:
+        place = next(json.loads(line) for line in f if '"place"' in line)
+    assert sorted(place["auto"]) == sorted([f"E1={sol[0][4]}", f"E6={sol[5][4]}"]), place
+
     hard_cages, hard_sol = load_puzzle("puzzle_034.json")
     run({3: click(btn_pt("Hint")),
          10: click(btn_pt("Hint")), 12: key(pygame.K_SPACE), 14: click(btn_pt("Hint")),

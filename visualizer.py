@@ -1675,43 +1675,34 @@ def play_mode(cages, solution, save_path=None):
                                 if (cr, cc) != (r, c) and pencil[cr][cc] and num in pencil[cr][cc]:
                                     batch.append(("auto_remove", cr, cc, board[cr][cc], set(pencil[cr][cc])))
                                     pencil[cr][cc].discard(num)
-                        # Auto-fill last remaining cell in cage/mark/row/col/box
+                        # Auto-fill the last empty cell of any cage, mark, row, column or box,
+                        # across the whole grid: one fill can leave another area one cell short
                         auto_placed = []
+                        houses = ([[(i, j) for j in range(9)] for i in range(9)]
+                                  + [[(i, j) for i in range(9)] for j in range(9)]
+                                  + [[(b // 3 * 3 + i, b % 3 * 3 + j) for i in range(3) for j in range(3)]
+                                     for b in range(9)])
                         keep_checking = True
                         while keep_checking:
                             keep_checking = False
-                            # Last cell in a cage or a mark with a sum
-                            for _key, asum, acells, _distinct in areas_at((r, c)):
-                                cage_empty = [(cr, cc) for cr, cc in acells if board[cr][cc] == 0]
-                                if len(cage_empty) == 1:
-                                    lr, lc = cage_empty[0]
-                                    val = asum - sum(board[cr][cc] for cr, cc in acells if board[cr][cc] != 0)
-                                    if 1 <= val <= 9:
-                                        batch.append(("auto_place", lr, lc, board[lr][lc], set(pencil[lr][lc])))
-                                        board[lr][lc] = val
-                                        pencil[lr][lc] = set()
-                                        _remove_pencil_peers(lr, lc, val, batch)
-                                        auto_placed.append(f"{_COL[lc]}{lr+1}={val}")
-                                        keep_checking = True
-                            # Last cell in row/col/box
-                            for house in [
-                                [(r, j) for j in range(9)],    # row
-                                [(i, c) for i in range(9)],    # col
-                                [(r//3*3+i, c//3*3+j) for i in range(3) for j in range(3)],  # box
-                            ]:
-                                empty_h = [(hr, hc) for hr, hc in house if board[hr][hc] == 0]
-                                if len(empty_h) == 1:
-                                    lr, lc = empty_h[0]
-                                    placed_digits = {board[hr][hc] for hr, hc in house if board[hr][hc] != 0}
-                                    missing = set(range(1, 10)) - placed_digits
-                                    if len(missing) == 1:
-                                        val = next(iter(missing))
-                                        batch.append(("auto_place", lr, lc, board[lr][lc], set(pencil[lr][lc])))
-                                        board[lr][lc] = val
-                                        pencil[lr][lc] = set()
-                                        _remove_pencil_peers(lr, lc, val, batch)
-                                        auto_placed.append(f"{_COL[lc]}{lr+1}={val}")
-                                        keep_checking = True
+                            areas = [(asum, acells, distinct) for _key, asum, acells, distinct in summed_areas()]
+                            areas += [(45, house, True) for house in houses]
+                            for asum, acells, distinct in areas:
+                                empty_a = [(ar, ac) for ar, ac in acells if board[ar][ac] == 0]
+                                if len(empty_a) != 1:
+                                    continue
+                                lr, lc = empty_a[0]
+                                there = [board[ar][ac] for ar, ac in acells if board[ar][ac] != 0]
+                                val = asum - sum(there)
+                                # A wrong digit elsewhere can make the sum point at a clash: leave it to the player
+                                if not 1 <= val <= 9 or (distinct and val in there)                                         or val not in get_possible_values(board, lr, lc):
+                                    continue
+                                batch.append(("auto_place", lr, lc, board[lr][lc], set(pencil[lr][lc])))
+                                board[lr][lc] = val
+                                pencil[lr][lc] = set()
+                                _remove_pencil_peers(lr, lc, val, batch)
+                                auto_placed.append(f"{_COL[lc]}{lr+1}={val}")
+                                keep_checking = True
                         if batch:
                             history.append(("batch", batch))
                         log_move("place", cell=_nm(r, c), digit=num, correct=num == solution[r][c],

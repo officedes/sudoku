@@ -11,7 +11,7 @@ Solver controls:
   SPACE/RIGHT next | LEFT back | A auto | +/- speed | R reset | Q quit
 
 Play controls:
-  Click cell to select | 1-9 place digit | 0/DEL clear | H hint
+  Click cell to select | 1-9 place digit | 0/DEL or Erase clear | H hint
   P toggle pencil mode | C check errors | R reset | Q quit
 """
 
@@ -1447,6 +1447,14 @@ def play_mode(cages, solution, save_path=None):
                                         log_move("undo")
                                     message = result or "Nothing to undo"
                                     msg_color = (60, 60, 80)
+                                elif btn_name == "Erase":
+                                    if selected:
+                                        # Same as the Delete key: a digit, else the pencil marks
+                                        pygame.event.post(pygame.event.Event(
+                                            pygame.KEYDOWN, key=pygame.K_DELETE, mod=0, unicode="", scancode=0))
+                                    else:
+                                        message = "Select the cells to erase first"
+                                        msg_color = (120, 80, 0)
                                 elif btn_name == "Hint":
                                     result = do_hint()
                                     if result:
@@ -2031,11 +2039,13 @@ def play_mode(cages, solution, save_path=None):
 
         # --- Tool row ---
         button_rects = {}
-        btn_list = ["Undo", "Pencil", "Hint", "Check", "Fill", "Fill All", "Mark"]
+        btn_list = ["Undo", "Erase", "Pencil", "Hint", "Check", "Fill", "Fill All", "Mark"]
         if selected_mark is not None:
             btn_list.append("Del Mark")
         btn_list.append("Reset")
         widths = [font_btn.size(b)[0] + 18 for b in btn_list]
+        if (GRID_SIZE - sum(widths)) / (len(btn_list) - 1) < 8:  # Del Mark makes ten: slimmer buttons
+            widths = [font_btn.size(b)[0] + 10 for b in btn_list]
         gap = (GRID_SIZE - sum(widths)) / max(1, len(btn_list) - 1)
         btn_x = GRID_OFFSET_X
         for bname, bw in zip(btn_list, widths):

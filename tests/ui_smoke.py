@@ -43,9 +43,11 @@ def pad_pt(n, block):
 def btn_pt(name, with_del=False):
     pygame.font.init()  # each app run ends with pygame.quit()
     font = pygame.font.SysFont("segoeui", 13, bold=True)
-    names = ["Undo", "Pencil", "Hint", "Check", "Fill", "Fill All", "Mark"] \
+    names = ["Undo", "Erase", "Pencil", "Hint", "Check", "Fill", "Fill All", "Mark"] \
         + (["Del Mark"] if with_del else []) + ["Reset"]
     widths = [font.size(b)[0] + 18 for b in names]
+    if (540 - sum(widths)) / (len(names) - 1) < 8:
+        widths = [font.size(b)[0] + 10 for b in names]
     gap = (540 - sum(widths)) / (len(names) - 1)
     x = GX
     for b, w in zip(names, widths):
@@ -171,6 +173,16 @@ def main():
     with open(os.path.join(auto_saves, "moves", "puzzle_032.jsonl")) as f:
         place = next(json.loads(line) for line in f if '"place"' in line)
     assert sorted(place["auto"]) == sorted([f"E1={sol[0][4]}", f"E6={sol[5][4]}"]), place
+
+    # Erase: a placed digit, then a cell's pencil marks - the Delete key's job, as a button
+    erase_saves = os.path.join(OUTPUT_DIR, "erase_saves")
+    shutil.rmtree(erase_saves, ignore_errors=True)
+    run({3: click(btn_pt("Fill All")), 5: click(cell_pt(0, 0)), 7: click(pad_pt(sol[0][0], 0)),
+         9: click(btn_pt("Erase")), 12: click(cell_pt(4, 4)), 14: click(btn_pt("Erase")), 17: ["shot:play_erase"]},
+        lambda: visualizer.play_mode(cages, sol, save_path=os.path.join(erase_saves, "puzzle_032.json")))
+    with open(os.path.join(erase_saves, "moves", "puzzle_032.jsonl")) as f:
+        clears = [json.loads(line)["cells"] for line in f if '"clear"' in line]
+    assert clears == [["A1"], ["E5"]], clears
 
     hard_cages, hard_sol = load_puzzle("puzzle_034.json")
     run({3: click(btn_pt("Hint")),

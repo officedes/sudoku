@@ -502,6 +502,7 @@ def hint_window(path):
     W = GX * 2 + CELL * 9
     CAP_Y = GY + CELL * 9 + 12
     H = CAP_Y + 150
+    window_icon()
     screen = pygame.display.set_mode((W, H))
     pygame.display.set_caption("Hint explained")
     f_title = pygame.font.SysFont("segoeui", 16, bold=True)
@@ -807,6 +808,7 @@ def play_mode(cages, solution, save_path=None):
         if scale < 1.0:
             # Centred on the whole desktop the bottom would slide under the taskbar
             os.environ["SDL_VIDEO_WINDOW_POS"] = f"{(desk_w - round(WINDOW_W * scale)) // 2},32"
+    window_icon()
     window = pygame.display.set_mode((round(WINDOW_W * scale), round(WINDOW_H * scale)))
     screen = window if scale == 1.0 else pygame.Surface((WINDOW_W, WINDOW_H))
 
@@ -2168,7 +2170,8 @@ def play_mode(cages, solution, save_path=None):
 
 def _dpi_aware():
     """Draw in real screen pixels on Windows. Without this, a 125% display
-    stretches the window as a bitmap and the text goes soft."""
+    stretches the window as a bitmap and the text goes soft. Also gives the
+    game its own taskbar entry, so it shows its icon instead of Python's."""
     if sys.platform != "win32":
         return
     import ctypes
@@ -2176,6 +2179,15 @@ def _dpi_aware():
         ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per monitor
     except (AttributeError, OSError):
         ctypes.windll.user32.SetProcessDPIAware()
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("officedes.KillerSudoku")
+
+
+def window_icon():
+    """The game's icon on the next window (pygame can't read icon.ico, hence the png)."""
+    try:
+        pygame.display.set_icon(pygame.image.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")))
+    except (pygame.error, FileNotFoundError):
+        pass
 
 
 def main():
@@ -2230,6 +2242,7 @@ def main():
     WINDOW_W = PANEL_X + PANEL_W + 20
     WINDOW_H = GRID_OFFSET_Y + GRID_SIZE + 44
 
+    window_icon()
     screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
     pygame.display.set_caption(f"Killer Sudoku — {filename}")
 

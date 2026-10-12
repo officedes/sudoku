@@ -26,7 +26,7 @@ import pygame
 
 from killer.solver import ADVANCED_STEP_PREFIXES, LEVEL_NAMES, required_level, solve_and_explain
 from main import DEFAULT_WORKERS, PUZZLES_DIR, load_puzzle
-from visualizer import SAVES_DIR, THEME
+from visualizer import SAVES_DIR, THEME, window_icon
 
 # Beside puzzles/, not in it: everything else reads every .json there as a puzzle
 LEVELS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "levels.json")
@@ -278,6 +278,7 @@ def choose():
         scale = min(1.0, (desk_h - 48 - 32 - 8) / H)  # same taskbar + title bar allowance as play mode
         if scale < 1.0:
             os.environ["SDL_VIDEO_WINDOW_POS"] = f"{(desk_w - round(W * scale)) // 2},32"
+    window_icon()
     window = pygame.display.set_mode((round(W * scale), round(H * scale)))
     screen = window if scale == 1.0 else pygame.Surface((W, H))
     pygame.display.set_caption("Killer Sudoku")

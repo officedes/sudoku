@@ -844,6 +844,8 @@ def play_mode(cages, solution, save_path=None):
     selected = set()  # set of (row, col)
     pencil_mode = False
     show_errors = False
+    reset_armed = 0.0  # when Reset was first clicked; a second click within RESET_CONFIRM_S resets
+    RESET_CONFIRM_S = 4
     hints_used = 0
     start_time = _time.time()
     history = []  # for undo: list of (action, r, c, old_val, old_pencil)
@@ -1281,6 +1283,11 @@ def play_mode(cages, solution, save_path=None):
             save_progress()
             last_save = _time.time()
         for event in pygame.event.get():
+            # Anything but a second click on Reset calls the reset off
+            if reset_armed and (event.type == pygame.KEYDOWN or (
+                    event.type == pygame.MOUSEBUTTONDOWN
+                    and not button_rects.get("Reset", pygame.Rect(0, 0, 0, 0)).collidepoint(to_design(event.pos)))):
+                reset_armed = 0.0
             if event.type == pygame.QUIT:
                 running = False
 
@@ -1508,10 +1515,16 @@ def play_mode(cages, solution, save_path=None):
                                         message = "Mark deleted"
                                         msg_color = (60, 60, 80)
                                 elif btn_name == "Reset":
-                                    do_reset()
-                                    log_move("reset")
-                                    message = "Board reset!"
-                                    msg_color = (60, 60, 80)
+                                    if _time.time() - reset_armed < RESET_CONFIRM_S:
+                                        reset_armed = 0.0
+                                        do_reset()
+                                        log_move("reset")
+                                        message = "Board reset!"
+                                        msg_color = (60, 60, 80)
+                                    else:
+                                        reset_armed = _time.time()
+                                        message = "Click Reset again to clear the whole board"
+                                        msg_color = (200, 0, 0)
                                 break
                     # Click in empty sidebar/background area clears selection
                     if not hit_something and event.button == 1:
@@ -2052,7 +2065,9 @@ def play_mode(cages, solution, save_path=None):
             rect = pygame.Rect(int(btn_x), TOOLS_Y, bw, 30)
             button_rects[bname] = rect
             active = (bname == "Pencil" and pencil_mode) or (bname == "Check" and show_errors)
-            bg = T["btn_active"] if active else T["btn_hover"] if rect.collidepoint(mouse) else T["btn"]
+            armed = bname == "Reset" and _time.time() - reset_armed < RESET_CONFIRM_S
+            bg = (T["error_bg"] if armed else T["btn_active"] if active
+                  else T["btn_hover"] if rect.collidepoint(mouse) else T["btn"])
             pygame.draw.rect(screen, bg, rect, border_radius=8)
             t = font_btn.render(bname, True, T["text"])
             screen.blit(t, (rect.x + (bw - t.get_width()) // 2, rect.y + (30 - t.get_height()) // 2))

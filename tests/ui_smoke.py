@@ -184,6 +184,18 @@ def main():
         clears = [json.loads(line)["cells"] for line in f if '"clear"' in line]
     assert clears == [["A1"], ["E5"]], clears
 
+    # Reset asks for a second click; a click anywhere else calls it off
+    reset_saves = os.path.join(OUTPUT_DIR, "reset_saves")
+    shutil.rmtree(reset_saves, ignore_errors=True)
+    run({3: click(cell_pt(0, 0)), 5: click(pad_pt(sol[0][0], 0)),
+         7: click(btn_pt("Reset")), 9: ["shot:play_reset_armed"],
+         11: click(cell_pt(4, 4)), 13: click(btn_pt("Reset")), 15: click(cell_pt(4, 4)),
+         17: click(btn_pt("Reset")), 19: click(btn_pt("Reset")), 21: ["shot:play_reset_done"]},
+        lambda: visualizer.play_mode(cages, sol, save_path=os.path.join(reset_saves, "puzzle_032.json")))
+    with open(os.path.join(reset_saves, "moves", "puzzle_032.jsonl")) as f:
+        kinds = [json.loads(line)["move"] for line in f]
+    assert kinds.count("reset") == 1 and kinds.index("reset") > kinds.index("place"), kinds
+
     hard_cages, hard_sol = load_puzzle("puzzle_034.json")
     run({3: click(btn_pt("Hint")),
          10: click(btn_pt("Hint")), 12: key(pygame.K_SPACE), 14: click(btn_pt("Hint")),

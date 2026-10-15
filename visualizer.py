@@ -10,9 +10,10 @@ Modes:
 Solver controls:
   SPACE/RIGHT next | LEFT back | A auto | +/- speed | R reset | Q quit
 
-Play controls:
-  Click cell to select | 1-9 place digit | 0/DEL or Erase clear | H hint
-  P toggle pencil mode | C check errors | R reset | Q quit
+Play controls (the buttons do the rest - see README.md):
+  Click / drag / Shift-click select cells | right-click select a cage
+  1-9 place digit (pencil with several cells selected) | 0/DEL/Backspace clear
+  P toggle pencil mode | Ctrl+Z undo | Esc clear the selection
 """
 
 import json
@@ -772,6 +773,16 @@ def play_mode(cages, solution, save_path=None):
     and picked up again next time: digits, pencil marks, ruled-out
     combinations, marks, the clock and the hints used (not the undo history).
     Solving the puzzle deletes the save.
+
+    One long function, laid out as a game loop:
+      1. layout constants, fonts and the game state as local variables;
+      2. nested helpers for the actions (do_hint, do_undo, do_reset,
+         save_progress, ...) - they change that state through `nonlocal`;
+      3. `while running:` - handle this frame's events (search for
+         `btn_name == "..."` to find a button), then redraw everything from
+         the state under the `# --- ... ---` headers.
+    All coordinates are at the design size; `to_design` maps the mouse back
+    when the window is scaled down.
     """
     import time as _time
 

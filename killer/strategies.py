@@ -1,16 +1,20 @@
 """
 Killer Sudoku solving strategies.
 
-Each strategy function takes (board, cages) and returns True if it placed a value.
-When placing, it prints a structured explanation:
-  Line 1: "Set cell (r,c) to N via STRATEGY_NAME"
-  Lines 2+: indented reasoning (parsed by solve_and_explain for the visualizer)
+Two kinds of function:
 
-Strategy tiers (easiest to hardest):
-  Tier 1 - Easy:   cage_deduction, rule_of_45, naked_singles
-  Tier 2 - Medium: consistent_numbers, cage_candidates, hidden_singles, limited_possible_sums
-  Tier 3 - Hard:   rule_of_k, clock_arithmetic, cage_complements, rule_of_necessity
-  Tier 4 - Expert: candidate_elimination (naked subsets + pointing + box-line + cage filtering)
+apply_*(board, cages) place a digit. Each writes at most one digit into
+  `board`, returns True if it did, and prints its explanation:
+    Line 1: "Set cell (r,c) to N via STRATEGY_NAME"
+    Lines 2+: indented reasoning (parsed by solve_and_explain for the visualizer)
+
+eliminate_*(candidates, ...) only remove digits from a 9x9 grid of candidate
+  sets, return True if they removed any, and append a description of each
+  removal to `log`. apply_candidate_elimination (at the bottom) runs them in a
+  loop and places whatever cell they reduce to a single digit.
+
+The order the solver tries them in, and which belong to which difficulty
+level, is set in killer/solver.py (NAMED_STRATEGIES, LEVEL_STRATEGIES).
 """
 
 from itertools import combinations, product

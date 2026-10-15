@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(python -c ' *)",
-      "Bash(timeout 3 python visualizer.py puzzle_003)"
-    ]
-  }
-}
